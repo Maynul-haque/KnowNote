@@ -5,6 +5,20 @@ on:
     tags:
       - 'v*.*.*'
 
+# Where the artifacts are published.
+#
+# electron-builder's configuration names the upstream repository, which is right
+# there and wrong in a fork: the build succeeded and the *upload* failed with a
+# 403, because the token has no write access to somebody else's repository.
+#
+# These two variables are the repository the workflow is actually running in, so
+# the same workflow publishes to the fork in a fork and to upstream in upstream.
+# The electron-builder configuration keeps the upstream name as its default for
+# a local build with no override.
+env:
+  PUBLISH_OWNER: ${{ github.repository_owner }}
+  PUBLISH_REPO: ${{ github.event.repository.name }}
+
 # Least privilege: the jobs only need to create/upload/edit GitHub releases.
 permissions:
   contents: write
@@ -171,6 +185,11 @@ jobs:
       # 构建和发布
       # --arm64 is explicit so the produced architecture does not silently depend
       # on whatever CPU the macos-latest runner happens to have.
+      # electron-builder is called directly rather than through
+      # `npm run build:mac`, because the publish target has to be overridden
+      # and the npm script cannot pass that through. The `npm run build` half of
+      # that script is the "Build application" step above, which this job has
+      # already run.
       - name: Build & Release (macOS)
         if: matrix.os == 'macos-latest'
         env:
@@ -178,7 +197,11 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run build:mac -- --arm64 --publish always
+        run: >
+          npx electron-builder --mac --arm64
+          --config.publish.owner="$PUBLISH_OWNER"
+          --config.publish.repo="$PUBLISH_REPO"
+          --publish always
 
       # Inspect the artifact we just shipped. This is the check that was missing
       # when v1.2.0 went out ad-hoc signed, hardened-runtime, and unable to load
@@ -279,7 +302,11 @@ jobs:
         timeout-minutes: 30
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build:win -- --publish always
+        run: >
+          npx electron-builder --win
+          --config.publish.owner="$PUBLISH_OWNER"
+          --config.publish.repo="$PUBLISH_REPO"
+          --publish always
 
   # Linux is built and published in its own job rather than as a third entry in
   # the matrix above, because the `publish` job promotes the draft only when
@@ -339,10 +366,18 @@ jobs:
       # a distribution channel rather than a download artifact, so the release
       # ships the two formats users actually fetch; `npm run build:linux`
       # still builds all three locally.
+      #
+      # The publish target is overridden for the same reason as the other two
+      # platforms: the configuration names the upstream repository, and a fork's
+      # token has no write access to it.
       - name: Build & Release (Linux)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --linux AppImage deb --publish always
+        run: >
+          npx electron-builder --linux AppImage deb
+          --config.publish.owner="$PUBLISH_OWNER"
+          --config.publish.repo="$PUBLISH_REPO"
+          --publish always
 
   # electron-builder uploads into the draft created by `create-draft` (see
   # publish.releaseType in electron-builder.yml, and the note on that job for
