@@ -5,6 +5,70 @@
     {
       "name": "corpus/api-gateway-migration.md",
       "content": "# Gateway API Migration Guide\n\n## Overview\n\nThis guide covers moving a client between Gateway API versions. It deliberately restates\nthe numbers that differ between versions, because the most common migration defect is a\nclient that keeps a v1 constant while pointing at a v2 or v3 route.\n\nThe three live surfaces are `/v1/complete`, `/v2/generate` and `/v3/chat`. Any of the three\nwill reject a body shaped for a different one with `400`, so a silently wrong version is\nusually a routing mistake rather than a schema mistake.\n\n## Choosing a Target\n\nNew integrations should target v3. Existing v2 integrations should move to v3 only when\nthey need structured output or the larger window, because v3 changes the rate-limit\naccounting in a way that can halve effective throughput for structured-output workloads.\n\nv1 integrations should migrate to v2 at minimum. v1 has no streaming mode, and every\nlong-answer workload written against v1 pays for it in perceived latency.\n\n## Endpoint Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Path | `/v1/complete` | `/v2/generate` | `/v3/chat` |\n| Body | `prompt` | `messages` | `messages` |\n| Streaming | none | server-sent events | server-sent events with `phase` |\n\nThe version lives in the path on all three. A client that versioned the host instead will\nnot be routed by the gateway at all, and the failure looks like a DNS failure rather than a\nversion mismatch.\n\n## Timeout and Retry Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Default timeout | 30000 ms | 60000 ms | 45000 ms |\n| Recommended retries | 2 | 5 | 3 |\n| Backoff base | 500 ms | 2000 ms | 1000 ms |\n\nA client migrating from v1 to v2 that keeps the v1 backoff of 500 ms will retry far more\naggressively than the version it is talking to expects, which is a common cause of\nself-inflicted `429`s during a cutover.\n\nMoving from v2 to v3 in the other direction is the riskier one: v3 has fewer recommended\nretries and a lower default timeout, so a client tuned for v2's patience will give up\nearlier than it did before.\n\n## Rate Limit Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Default limit | 600 rpm | 3000 rpm | 1200 rpm |\n| Burst | 60 | 300 | 120 |\n\nThe v3 structured-output path counts as two requests. A v2 workload that produced 1000\nstructured responses per minute was comfortably inside v2's 3000 rpm budget and is almost\nexactly at v3's effective 600-per-minute structured ceiling, so the migration is a\nthroughput change even though the headline number only fell from 3000 to 1200.\n\n## Context Window Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Window | 8192 tokens | 32768 tokens | 65536 tokens |\n| Auto-truncation | no | no | no |\n\nNone of the three truncates automatically; all three reject an oversized request with `400`.\nClients that relied on an upstream provider's truncation find the migration fails loudly\nrather than quietly, which is intentional.\n\n## Checklist\n\nBefore cutting over, confirm the path, the body shape, the timeout, the retry count, the\nbackoff base and the rate-limit budget. Of those six, the two that are missed most often in\npractice are the backoff base and the rate-limit budget, because neither produces an error —\nthey produce a client that is slower or noisier than it was, which is easy to attribute to\nthe model rather than to the migration.",
+      "loader": {
+        "source": "# Gateway API Migration Guide\n\n## Overview\n\nThis guide covers moving a client between Gateway API versions. It deliberately restates\nthe numbers that differ between versions, because the most common migration defect is a\nclient that keeps a v1 constant while pointing at a v2 or v3 route.\n\nThe three live surfaces are `/v1/complete`, `/v2/generate` and `/v3/chat`. Any of the three\nwill reject a body shaped for a different one with `400`, so a silently wrong version is\nusually a routing mistake rather than a schema mistake.\n\n## Choosing a Target\n\nNew integrations should target v3. Existing v2 integrations should move to v3 only when\nthey need structured output or the larger window, because v3 changes the rate-limit\naccounting in a way that can halve effective throughput for structured-output workloads.\n\nv1 integrations should migrate to v2 at minimum. v1 has no streaming mode, and every\nlong-answer workload written against v1 pays for it in perceived latency.\n\n## Endpoint Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Path | `/v1/complete` | `/v2/generate` | `/v3/chat` |\n| Body | `prompt` | `messages` | `messages` |\n| Streaming | none | server-sent events | server-sent events with `phase` |\n\nThe version lives in the path on all three. A client that versioned the host instead will\nnot be routed by the gateway at all, and the failure looks like a DNS failure rather than a\nversion mismatch.\n\n## Timeout and Retry Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Default timeout | 30000 ms | 60000 ms | 45000 ms |\n| Recommended retries | 2 | 5 | 3 |\n| Backoff base | 500 ms | 2000 ms | 1000 ms |\n\nA client migrating from v1 to v2 that keeps the v1 backoff of 500 ms will retry far more\naggressively than the version it is talking to expects, which is a common cause of\nself-inflicted `429`s during a cutover.\n\nMoving from v2 to v3 in the other direction is the riskier one: v3 has fewer recommended\nretries and a lower default timeout, so a client tuned for v2's patience will give up\nearlier than it did before.\n\n## Rate Limit Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Default limit | 600 rpm | 3000 rpm | 1200 rpm |\n| Burst | 60 | 300 | 120 |\n\nThe v3 structured-output path counts as two requests. A v2 workload that produced 1000\nstructured responses per minute was comfortably inside v2's 3000 rpm budget and is almost\nexactly at v3's effective 600-per-minute structured ceiling, so the migration is a\nthroughput change even though the headline number only fell from 3000 to 1200.\n\n## Context Window Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Window | 8192 tokens | 32768 tokens | 65536 tokens |\n| Auto-truncation | no | no | no |\n\nNone of the three truncates automatically; all three reject an oversized request with `400`.\nClients that relied on an upstream provider's truncation find the migration fails loudly\nrather than quietly, which is intentional.\n\n## Checklist\n\nBefore cutting over, confirm the path, the body shape, the timeout, the retry count, the\nbackoff base and the rate-limit budget. Of those six, the two that are missed most often in\npractice are the backoff base and the rate-limit budget, because neither produces an error —\nthey produce a client that is slower or noisier than it was, which is easy to attribute to\nthe model rather than to the migration.\n",
+        "content": "# Gateway API Migration Guide\n\n## Overview\n\nThis guide covers moving a client between Gateway API versions. It deliberately restates\nthe numbers that differ between versions, because the most common migration defect is a\nclient that keeps a v1 constant while pointing at a v2 or v3 route.\n\nThe three live surfaces are `/v1/complete`, `/v2/generate` and `/v3/chat`. Any of the three\nwill reject a body shaped for a different one with `400`, so a silently wrong version is\nusually a routing mistake rather than a schema mistake.\n\n## Choosing a Target\n\nNew integrations should target v3. Existing v2 integrations should move to v3 only when\nthey need structured output or the larger window, because v3 changes the rate-limit\naccounting in a way that can halve effective throughput for structured-output workloads.\n\nv1 integrations should migrate to v2 at minimum. v1 has no streaming mode, and every\nlong-answer workload written against v1 pays for it in perceived latency.\n\n## Endpoint Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Path | `/v1/complete` | `/v2/generate` | `/v3/chat` |\n| Body | `prompt` | `messages` | `messages` |\n| Streaming | none | server-sent events | server-sent events with `phase` |\n\nThe version lives in the path on all three. A client that versioned the host instead will\nnot be routed by the gateway at all, and the failure looks like a DNS failure rather than a\nversion mismatch.\n\n## Timeout and Retry Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Default timeout | 30000 ms | 60000 ms | 45000 ms |\n| Recommended retries | 2 | 5 | 3 |\n| Backoff base | 500 ms | 2000 ms | 1000 ms |\n\nA client migrating from v1 to v2 that keeps the v1 backoff of 500 ms will retry far more\naggressively than the version it is talking to expects, which is a common cause of\nself-inflicted `429`s during a cutover.\n\nMoving from v2 to v3 in the other direction is the riskier one: v3 has fewer recommended\nretries and a lower default timeout, so a client tuned for v2's patience will give up\nearlier than it did before.\n\n## Rate Limit Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Default limit | 600 rpm | 3000 rpm | 1200 rpm |\n| Burst | 60 | 300 | 120 |\n\nThe v3 structured-output path counts as two requests. A v2 workload that produced 1000\nstructured responses per minute was comfortably inside v2's 3000 rpm budget and is almost\nexactly at v3's effective 600-per-minute structured ceiling, so the migration is a\nthroughput change even though the headline number only fell from 3000 to 1200.\n\n## Context Window Changes\n\n| | v1 | v2 | v3 |\n| --- | --- | --- | --- |\n| Window | 8192 tokens | 32768 tokens | 65536 tokens |\n| Auto-truncation | no | no | no |\n\nNone of the three truncates automatically; all three reject an oversized request with `400`.\nClients that relied on an upstream provider's truncation find the migration fails loudly\nrather than quietly, which is intentional.\n\n## Checklist\n\nBefore cutting over, confirm the path, the body shape, the timeout, the retry count, the\nbackoff base and the rate-limit budget. Of those six, the two that are missed most often in\npractice are the backoff base and the rate-limit budget, because neither produces an error —\nthey produce a client that is slower or noisier than it was, which is easy to attribute to\nthe model rather than to the migration.",
+        "title": "Gateway API Migration Guide",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Gateway API Migration Guide",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 31,
+                "startOffset": 31,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Choosing a Target",
+                "startOffsetUtf16": 528,
+                "startOffset": 528,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Endpoint Changes",
+                "startOffsetUtf16": 972,
+                "startOffset": 972,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Timeout and Retry Changes",
+                "startOffsetUtf16": 1418,
+                "startOffset": 1418,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Rate Limit Changes",
+                "startOffsetUtf16": 2046,
+                "startOffset": 2046,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Context Window Changes",
+                "startOffsetUtf16": 2532,
+                "startOffset": 2532,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Checklist",
+                "startOffsetUtf16": 2921,
+                "startOffset": 2921,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -11189,6 +11253,56 @@
     {
       "name": "corpus/api-gateway-v1.md",
       "content": "# Gateway API v1 Reference\n\n## Overview\n\nThe v1 Gateway API is the first generally available surface for text completion. It\naccepts a prompt and returns a completion, with no notion of roles, tools or streaming\nframes beyond newline-delimited chunks. Clients are expected to be long-lived processes\nthat hold a single connection open and issue many requests over it.\n\nv1 is closed to new features. It receives security fixes only, and the deprecation notice\non the v1 endpoint names v2 as the supported successor.\n\n## Endpoint\n\nRequests go to the `/v1/complete` path. The path is versioned rather than the host, so a\nclient that hardcodes the host will silently keep talking to v1 after an upgrade. The\nrequest body carries `prompt`, `max_tokens` and an optional `stop` array; there is no\n`system` field, and a system instruction has to be concatenated into the prompt.\n\nResponses are returned as a single JSON object. v1 has no streaming mode, which is the\nchange most often cited in migration discussions.\n\n## Timeouts and Retry\n\nThe default request timeout is **30000 milliseconds**. A request that has not produced any\noutput within that window is cancelled by the gateway, not by the client, and the client\nsees a `504` with the body `{\"error\":\"upstream_timeout\"}`.\n\nThe recommended retry count is **2**. The gateway does not retry on the client's behalf, so\nthis is a client-side contract rather than an enforced limit. The recommended backoff base\nis **500 milliseconds**, doubled on each subsequent attempt, which produces waits of 500 ms\nthen 1000 ms for the two allowed retries. Jitter is not required by v1 but is recommended.\n\nRetrying a timed-out request is safe because v1 has no server-side session state. Retrying\na request that failed with `429` is not useful unless the `Retry-After` header is honoured\nfirst.\n\n## Rate Limits\n\nThe default rate limit is **600 requests per minute**, counted per API key rather than per\nconnection. Bursts of up to 60 requests may be issued within any one-second window before\nthe limiter engages, so a short burst is allowed even when the per-minute budget is nearly\nspent.\n\nExceeding the limit returns `429` with a `Retry-After` header in seconds. The limiter\ncounts a request when the body has been fully received, not when the response is produced,\nwhich means a slow upstream does not consume budget twice.\n\n## Context Window\n\nThe maximum context window is **8192 tokens**, counting the prompt and the completion\ntogether. A request whose prompt alone exceeds the window is rejected with `400` rather\nthan truncated, because silent truncation was found to produce worse answers than a\nvisible failure.\n\nToken counting uses the same tokenizer as the model, so an approximation by character\ncount will disagree near the boundary. The gateway exposes a `/v1/tokenize` helper for\nclients that want an exact count before sending.",
+      "loader": {
+        "source": "# Gateway API v1 Reference\n\n## Overview\n\nThe v1 Gateway API is the first generally available surface for text completion. It\naccepts a prompt and returns a completion, with no notion of roles, tools or streaming\nframes beyond newline-delimited chunks. Clients are expected to be long-lived processes\nthat hold a single connection open and issue many requests over it.\n\nv1 is closed to new features. It receives security fixes only, and the deprecation notice\non the v1 endpoint names v2 as the supported successor.\n\n## Endpoint\n\nRequests go to the `/v1/complete` path. The path is versioned rather than the host, so a\nclient that hardcodes the host will silently keep talking to v1 after an upgrade. The\nrequest body carries `prompt`, `max_tokens` and an optional `stop` array; there is no\n`system` field, and a system instruction has to be concatenated into the prompt.\n\nResponses are returned as a single JSON object. v1 has no streaming mode, which is the\nchange most often cited in migration discussions.\n\n## Timeouts and Retry\n\nThe default request timeout is **30000 milliseconds**. A request that has not produced any\noutput within that window is cancelled by the gateway, not by the client, and the client\nsees a `504` with the body `{\"error\":\"upstream_timeout\"}`.\n\nThe recommended retry count is **2**. The gateway does not retry on the client's behalf, so\nthis is a client-side contract rather than an enforced limit. The recommended backoff base\nis **500 milliseconds**, doubled on each subsequent attempt, which produces waits of 500 ms\nthen 1000 ms for the two allowed retries. Jitter is not required by v1 but is recommended.\n\nRetrying a timed-out request is safe because v1 has no server-side session state. Retrying\na request that failed with `429` is not useful unless the `Retry-After` header is honoured\nfirst.\n\n## Rate Limits\n\nThe default rate limit is **600 requests per minute**, counted per API key rather than per\nconnection. Bursts of up to 60 requests may be issued within any one-second window before\nthe limiter engages, so a short burst is allowed even when the per-minute budget is nearly\nspent.\n\nExceeding the limit returns `429` with a `Retry-After` header in seconds. The limiter\ncounts a request when the body has been fully received, not when the response is produced,\nwhich means a slow upstream does not consume budget twice.\n\n## Context Window\n\nThe maximum context window is **8192 tokens**, counting the prompt and the completion\ntogether. A request whose prompt alone exceeds the window is rejected with `400` rather\nthan truncated, because silent truncation was found to produce worse answers than a\nvisible failure.\n\nToken counting uses the same tokenizer as the model, so an approximation by character\ncount will disagree near the boundary. The gateway exposes a `/v1/tokenize` helper for\nclients that want an exact count before sending.\n",
+        "content": "# Gateway API v1 Reference\n\n## Overview\n\nThe v1 Gateway API is the first generally available surface for text completion. It\naccepts a prompt and returns a completion, with no notion of roles, tools or streaming\nframes beyond newline-delimited chunks. Clients are expected to be long-lived processes\nthat hold a single connection open and issue many requests over it.\n\nv1 is closed to new features. It receives security fixes only, and the deprecation notice\non the v1 endpoint names v2 as the supported successor.\n\n## Endpoint\n\nRequests go to the `/v1/complete` path. The path is versioned rather than the host, so a\nclient that hardcodes the host will silently keep talking to v1 after an upgrade. The\nrequest body carries `prompt`, `max_tokens` and an optional `stop` array; there is no\n`system` field, and a system instruction has to be concatenated into the prompt.\n\nResponses are returned as a single JSON object. v1 has no streaming mode, which is the\nchange most often cited in migration discussions.\n\n## Timeouts and Retry\n\nThe default request timeout is **30000 milliseconds**. A request that has not produced any\noutput within that window is cancelled by the gateway, not by the client, and the client\nsees a `504` with the body `{\"error\":\"upstream_timeout\"}`.\n\nThe recommended retry count is **2**. The gateway does not retry on the client's behalf, so\nthis is a client-side contract rather than an enforced limit. The recommended backoff base\nis **500 milliseconds**, doubled on each subsequent attempt, which produces waits of 500 ms\nthen 1000 ms for the two allowed retries. Jitter is not required by v1 but is recommended.\n\nRetrying a timed-out request is safe because v1 has no server-side session state. Retrying\na request that failed with `429` is not useful unless the `Retry-After` header is honoured\nfirst.\n\n## Rate Limits\n\nThe default rate limit is **600 requests per minute**, counted per API key rather than per\nconnection. Bursts of up to 60 requests may be issued within any one-second window before\nthe limiter engages, so a short burst is allowed even when the per-minute budget is nearly\nspent.\n\nExceeding the limit returns `429` with a `Retry-After` header in seconds. The limiter\ncounts a request when the body has been fully received, not when the response is produced,\nwhich means a slow upstream does not consume budget twice.\n\n## Context Window\n\nThe maximum context window is **8192 tokens**, counting the prompt and the completion\ntogether. A request whose prompt alone exceeds the window is rejected with `400` rather\nthan truncated, because silent truncation was found to produce worse answers than a\nvisible failure.\n\nToken counting uses the same tokenizer as the model, so an approximation by character\ncount will disagree near the boundary. The gateway exposes a `/v1/tokenize` helper for\nclients that want an exact count before sending.",
+        "title": "Gateway API v1 Reference",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Gateway API v1 Reference",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 28,
+                "startOffset": 28,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Endpoint",
+                "startOffsetUtf16": 516,
+                "startOffset": 516,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Timeouts and Retry",
+                "startOffsetUtf16": 1010,
+                "startOffset": 1010,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Rate Limits",
+                "startOffsetUtf16": 1830,
+                "startOffset": 1830,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Context Window",
+                "startOffsetUtf16": 2363,
+                "startOffset": 2363,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -20571,6 +20685,63 @@
     {
       "name": "corpus/api-gateway-v2.md",
       "content": "# Gateway API v2 Reference\n\n## Overview\n\nThe v2 Gateway API replaces the single-prompt completion surface with a message list. It\nintroduces roles, a real streaming mode and server-side sessions, and it is the surface the\ndeprecation notice on v1 points at. v2 is feature-frozen: it receives correctness and\nsecurity fixes, and v3 is the current recommended target for new integrations.\n\nThe message list is the change that forces most migrations. A v1 prompt with a concatenated\nsystem instruction has to be split into a `system` message and a `user` message, and clients\nthat relied on concatenation usually find their prompts measurably worse until they split\nthem.\n\n## Endpoint\n\nRequests go to the `/v2/generate` path. Unlike v1, the version is part of the route and\nthe gateway rejects a v1-shaped body with `400` and a pointer at the migration guide. The\nrequest body carries `messages`, `max_tokens`, `stream` and an optional `tools` array.\n\nStreaming is enabled per request with `stream: true`, and frames are server-sent events\nrather than newline-delimited JSON. Frames carry a monotonically increasing `index`; a\nclient that reconnects mid-stream must resume from the last index it acknowledged.\n\n## Timeouts and Retry\n\nThe default request timeout is **60000 milliseconds**, doubled from v1 because v2 sessions\nare allowed to think for longer before the first token. The timeout covers the whole turn,\nnot the gap between frames.\n\nThe recommended retry count is **5**, with a recommended backoff base of **2000\nmilliseconds** and full jitter. The higher retry count exists because v2 introduced\nserver-side sessions, and a retried request may attach to the same session rather than\nstarting a new one — retrying is therefore usually cheaper than it was in v1.\n\nA timeout is reported as `504` with `{\"error\":\"upstream_timeout\"}` exactly as in v1, so a\nclient that only inspects that field cannot tell which version produced it.\n\n## Rate Limits\n\nThe default rate limit is **3000 requests per minute**, counted per API key. Sessions are\ncounted separately: opening a session costs one request, and each subsequent turn on that\nsession costs one request, so a long conversation consumes budget linearly.\n\nBursts of up to 300 requests may be issued within one second. When a session is already\nopen, the limiter applies the request to the session's own budget first, which means a\nbursty client with many open sessions can exhaust the per-minute budget much faster than\nthe raw request count suggests.\n\n## Context Window\n\nThe maximum context window is **32768 tokens**. v2 grew the window partly to make room for\ntool definitions, which are counted in the same budget as messages. A request that exceeds\nthe window is rejected with `400`; v2 does not offer automatic truncation either.\n\nBecause tools are counted, a request with a large tool schema can exceed the window even\nwhen the conversation itself is short. The gateway reports the split between message tokens\nand tool tokens in the `usage` block of every response so a client can see which side grew.\n\n## Sessions\n\nA session is created implicitly by the first request that omits `session_id`. Sessions\nexpire after 30 minutes of inactivity. A request that names an expired session is not an\nerror: the gateway starts a new one and reports the new id, a behaviour that has surprised\nseveral integrators into thinking their retry had lost context.",
+      "loader": {
+        "source": "# Gateway API v2 Reference\n\n## Overview\n\nThe v2 Gateway API replaces the single-prompt completion surface with a message list. It\nintroduces roles, a real streaming mode and server-side sessions, and it is the surface the\ndeprecation notice on v1 points at. v2 is feature-frozen: it receives correctness and\nsecurity fixes, and v3 is the current recommended target for new integrations.\n\nThe message list is the change that forces most migrations. A v1 prompt with a concatenated\nsystem instruction has to be split into a `system` message and a `user` message, and clients\nthat relied on concatenation usually find their prompts measurably worse until they split\nthem.\n\n## Endpoint\n\nRequests go to the `/v2/generate` path. Unlike v1, the version is part of the route and\nthe gateway rejects a v1-shaped body with `400` and a pointer at the migration guide. The\nrequest body carries `messages`, `max_tokens`, `stream` and an optional `tools` array.\n\nStreaming is enabled per request with `stream: true`, and frames are server-sent events\nrather than newline-delimited JSON. Frames carry a monotonically increasing `index`; a\nclient that reconnects mid-stream must resume from the last index it acknowledged.\n\n## Timeouts and Retry\n\nThe default request timeout is **60000 milliseconds**, doubled from v1 because v2 sessions\nare allowed to think for longer before the first token. The timeout covers the whole turn,\nnot the gap between frames.\n\nThe recommended retry count is **5**, with a recommended backoff base of **2000\nmilliseconds** and full jitter. The higher retry count exists because v2 introduced\nserver-side sessions, and a retried request may attach to the same session rather than\nstarting a new one — retrying is therefore usually cheaper than it was in v1.\n\nA timeout is reported as `504` with `{\"error\":\"upstream_timeout\"}` exactly as in v1, so a\nclient that only inspects that field cannot tell which version produced it.\n\n## Rate Limits\n\nThe default rate limit is **3000 requests per minute**, counted per API key. Sessions are\ncounted separately: opening a session costs one request, and each subsequent turn on that\nsession costs one request, so a long conversation consumes budget linearly.\n\nBursts of up to 300 requests may be issued within one second. When a session is already\nopen, the limiter applies the request to the session's own budget first, which means a\nbursty client with many open sessions can exhaust the per-minute budget much faster than\nthe raw request count suggests.\n\n## Context Window\n\nThe maximum context window is **32768 tokens**. v2 grew the window partly to make room for\ntool definitions, which are counted in the same budget as messages. A request that exceeds\nthe window is rejected with `400`; v2 does not offer automatic truncation either.\n\nBecause tools are counted, a request with a large tool schema can exceed the window even\nwhen the conversation itself is short. The gateway reports the split between message tokens\nand tool tokens in the `usage` block of every response so a client can see which side grew.\n\n## Sessions\n\nA session is created implicitly by the first request that omits `session_id`. Sessions\nexpire after 30 minutes of inactivity. A request that names an expired session is not an\nerror: the gateway starts a new one and reports the new id, a behaviour that has surprised\nseveral integrators into thinking their retry had lost context.\n",
+        "content": "# Gateway API v2 Reference\n\n## Overview\n\nThe v2 Gateway API replaces the single-prompt completion surface with a message list. It\nintroduces roles, a real streaming mode and server-side sessions, and it is the surface the\ndeprecation notice on v1 points at. v2 is feature-frozen: it receives correctness and\nsecurity fixes, and v3 is the current recommended target for new integrations.\n\nThe message list is the change that forces most migrations. A v1 prompt with a concatenated\nsystem instruction has to be split into a `system` message and a `user` message, and clients\nthat relied on concatenation usually find their prompts measurably worse until they split\nthem.\n\n## Endpoint\n\nRequests go to the `/v2/generate` path. Unlike v1, the version is part of the route and\nthe gateway rejects a v1-shaped body with `400` and a pointer at the migration guide. The\nrequest body carries `messages`, `max_tokens`, `stream` and an optional `tools` array.\n\nStreaming is enabled per request with `stream: true`, and frames are server-sent events\nrather than newline-delimited JSON. Frames carry a monotonically increasing `index`; a\nclient that reconnects mid-stream must resume from the last index it acknowledged.\n\n## Timeouts and Retry\n\nThe default request timeout is **60000 milliseconds**, doubled from v1 because v2 sessions\nare allowed to think for longer before the first token. The timeout covers the whole turn,\nnot the gap between frames.\n\nThe recommended retry count is **5**, with a recommended backoff base of **2000\nmilliseconds** and full jitter. The higher retry count exists because v2 introduced\nserver-side sessions, and a retried request may attach to the same session rather than\nstarting a new one — retrying is therefore usually cheaper than it was in v1.\n\nA timeout is reported as `504` with `{\"error\":\"upstream_timeout\"}` exactly as in v1, so a\nclient that only inspects that field cannot tell which version produced it.\n\n## Rate Limits\n\nThe default rate limit is **3000 requests per minute**, counted per API key. Sessions are\ncounted separately: opening a session costs one request, and each subsequent turn on that\nsession costs one request, so a long conversation consumes budget linearly.\n\nBursts of up to 300 requests may be issued within one second. When a session is already\nopen, the limiter applies the request to the session's own budget first, which means a\nbursty client with many open sessions can exhaust the per-minute budget much faster than\nthe raw request count suggests.\n\n## Context Window\n\nThe maximum context window is **32768 tokens**. v2 grew the window partly to make room for\ntool definitions, which are counted in the same budget as messages. A request that exceeds\nthe window is rejected with `400`; v2 does not offer automatic truncation either.\n\nBecause tools are counted, a request with a large tool schema can exceed the window even\nwhen the conversation itself is short. The gateway reports the split between message tokens\nand tool tokens in the `usage` block of every response so a client can see which side grew.\n\n## Sessions\n\nA session is created implicitly by the first request that omits `session_id`. Sessions\nexpire after 30 minutes of inactivity. A request that names an expired session is not an\nerror: the gateway starts a new one and reports the new id, a behaviour that has surprised\nseveral integrators into thinking their retry had lost context.",
+        "title": "Gateway API v2 Reference",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Gateway API v2 Reference",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 28,
+                "startOffset": 28,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Endpoint",
+                "startOffsetUtf16": 670,
+                "startOffset": 670,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Timeouts and Retry",
+                "startOffsetUtf16": 1208,
+                "startOffset": 1208,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Rate Limits",
+                "startOffsetUtf16": 1939,
+                "startOffset": 1941,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Context Window",
+                "startOffsetUtf16": 2509,
+                "startOffset": 2511,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sessions",
+                "startOffsetUtf16": 3067,
+                "startOffset": 3069,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -31649,6 +31820,63 @@
     {
       "name": "corpus/api-gateway-v3.md",
       "content": "# Gateway API v3 Reference\n\n## Overview\n\nThe v3 Gateway API is the current recommended surface. It keeps the message list and\nstreaming model introduced in v2 and adds structured output, explicit reasoning budgets and\na per-request deadline. v1 and v2 remain available but receive fixes only.\n\nv3 is not wire-compatible with v2. A v2 body sent to the v3 route is rejected with `400`\nand a link to the migration guide, exactly as a v1 body is rejected by v2.\n\n## Endpoint\n\nRequests go to the `/v3/chat` path. The body carries `messages`, `max_tokens`, `stream`,\nan optional `response_format` describing structured output, and an optional `deadline_ms`\nthat overrides the default timeout for one request.\n\nStreaming frames are server-sent events and now carry both an `index` and a `phase`, so a\nclient can distinguish reasoning frames from answer frames without inspecting the text.\nStructured output is delivered as a single final frame; partial structured output is not\nemitted, because a half-parsed object was found to be worse than no object.\n\n## Timeouts and Retry\n\nThe default request timeout is **45000 milliseconds**, between v1's 30 s and v2's 60 s,\nchosen after measuring that the median v3 turn finishes in about 11 s while the long tail\nbenefits from more room than v1 gave.\n\nThe recommended retry count is **3**, with a backoff base of **1000 milliseconds** and full\njitter. v3 adds `deadline_ms`, and a request that carries it uses that value instead of the\ndefault: a client that sets `deadline_ms` to 10000 is not retried by the gateway past the\nclient's own deadline, which makes the two settings interact in a way v1 and v2 had no\nequivalent for.\n\n## Rate Limits\n\nThe default rate limit is **1200 requests per minute**. Structured-output requests are\ncounted as two requests, because the gateway runs a validation pass over the produced object\nbefore returning it; a client that migrates a high-volume v2 workload to structured output\ncan therefore exhaust its budget at half the expected request count.\n\nBursts of up to 120 requests may be issued within one second. The limiter applies reasoning\ntokens against a separate budget from requests, so a client with long reasoning turns can\nhit the token budget before the request budget.\n\n## Context Window\n\nThe maximum context window is **65536 tokens**, the largest of the three versions, and the\nonly one where tool schemas, reasoning tokens and messages are reported as three separate\nline items in `usage` rather than folded together.\n\nA request that exceeds the window is rejected with `400`. v3 does not truncate\nautomatically, but it does report how many tokens the request would need, which makes a\nprogrammatic retry at a smaller size possible without re-tokenising the input.\n\n## Structured Output\n\n`response_format` accepts a JSON schema and a strictness flag. Strict mode is slower but\nguarantees the object validates against the schema. Non-strict mode is the default and can\nreturn an object that parses but does not match, which the gateway flags in a\n`validation_errors` array rather than failing the request.",
+      "loader": {
+        "source": "# Gateway API v3 Reference\n\n## Overview\n\nThe v3 Gateway API is the current recommended surface. It keeps the message list and\nstreaming model introduced in v2 and adds structured output, explicit reasoning budgets and\na per-request deadline. v1 and v2 remain available but receive fixes only.\n\nv3 is not wire-compatible with v2. A v2 body sent to the v3 route is rejected with `400`\nand a link to the migration guide, exactly as a v1 body is rejected by v2.\n\n## Endpoint\n\nRequests go to the `/v3/chat` path. The body carries `messages`, `max_tokens`, `stream`,\nan optional `response_format` describing structured output, and an optional `deadline_ms`\nthat overrides the default timeout for one request.\n\nStreaming frames are server-sent events and now carry both an `index` and a `phase`, so a\nclient can distinguish reasoning frames from answer frames without inspecting the text.\nStructured output is delivered as a single final frame; partial structured output is not\nemitted, because a half-parsed object was found to be worse than no object.\n\n## Timeouts and Retry\n\nThe default request timeout is **45000 milliseconds**, between v1's 30 s and v2's 60 s,\nchosen after measuring that the median v3 turn finishes in about 11 s while the long tail\nbenefits from more room than v1 gave.\n\nThe recommended retry count is **3**, with a backoff base of **1000 milliseconds** and full\njitter. v3 adds `deadline_ms`, and a request that carries it uses that value instead of the\ndefault: a client that sets `deadline_ms` to 10000 is not retried by the gateway past the\nclient's own deadline, which makes the two settings interact in a way v1 and v2 had no\nequivalent for.\n\n## Rate Limits\n\nThe default rate limit is **1200 requests per minute**. Structured-output requests are\ncounted as two requests, because the gateway runs a validation pass over the produced object\nbefore returning it; a client that migrates a high-volume v2 workload to structured output\ncan therefore exhaust its budget at half the expected request count.\n\nBursts of up to 120 requests may be issued within one second. The limiter applies reasoning\ntokens against a separate budget from requests, so a client with long reasoning turns can\nhit the token budget before the request budget.\n\n## Context Window\n\nThe maximum context window is **65536 tokens**, the largest of the three versions, and the\nonly one where tool schemas, reasoning tokens and messages are reported as three separate\nline items in `usage` rather than folded together.\n\nA request that exceeds the window is rejected with `400`. v3 does not truncate\nautomatically, but it does report how many tokens the request would need, which makes a\nprogrammatic retry at a smaller size possible without re-tokenising the input.\n\n## Structured Output\n\n`response_format` accepts a JSON schema and a strictness flag. Strict mode is slower but\nguarantees the object validates against the schema. Non-strict mode is the default and can\nreturn an object that parses but does not match, which the gateway flags in a\n`validation_errors` array rather than failing the request.\n",
+        "content": "# Gateway API v3 Reference\n\n## Overview\n\nThe v3 Gateway API is the current recommended surface. It keeps the message list and\nstreaming model introduced in v2 and adds structured output, explicit reasoning budgets and\na per-request deadline. v1 and v2 remain available but receive fixes only.\n\nv3 is not wire-compatible with v2. A v2 body sent to the v3 route is rejected with `400`\nand a link to the migration guide, exactly as a v1 body is rejected by v2.\n\n## Endpoint\n\nRequests go to the `/v3/chat` path. The body carries `messages`, `max_tokens`, `stream`,\nan optional `response_format` describing structured output, and an optional `deadline_ms`\nthat overrides the default timeout for one request.\n\nStreaming frames are server-sent events and now carry both an `index` and a `phase`, so a\nclient can distinguish reasoning frames from answer frames without inspecting the text.\nStructured output is delivered as a single final frame; partial structured output is not\nemitted, because a half-parsed object was found to be worse than no object.\n\n## Timeouts and Retry\n\nThe default request timeout is **45000 milliseconds**, between v1's 30 s and v2's 60 s,\nchosen after measuring that the median v3 turn finishes in about 11 s while the long tail\nbenefits from more room than v1 gave.\n\nThe recommended retry count is **3**, with a backoff base of **1000 milliseconds** and full\njitter. v3 adds `deadline_ms`, and a request that carries it uses that value instead of the\ndefault: a client that sets `deadline_ms` to 10000 is not retried by the gateway past the\nclient's own deadline, which makes the two settings interact in a way v1 and v2 had no\nequivalent for.\n\n## Rate Limits\n\nThe default rate limit is **1200 requests per minute**. Structured-output requests are\ncounted as two requests, because the gateway runs a validation pass over the produced object\nbefore returning it; a client that migrates a high-volume v2 workload to structured output\ncan therefore exhaust its budget at half the expected request count.\n\nBursts of up to 120 requests may be issued within one second. The limiter applies reasoning\ntokens against a separate budget from requests, so a client with long reasoning turns can\nhit the token budget before the request budget.\n\n## Context Window\n\nThe maximum context window is **65536 tokens**, the largest of the three versions, and the\nonly one where tool schemas, reasoning tokens and messages are reported as three separate\nline items in `usage` rather than folded together.\n\nA request that exceeds the window is rejected with `400`. v3 does not truncate\nautomatically, but it does report how many tokens the request would need, which makes a\nprogrammatic retry at a smaller size possible without re-tokenising the input.\n\n## Structured Output\n\n`response_format` accepts a JSON schema and a strictness flag. Strict mode is slower but\nguarantees the object validates against the schema. Non-strict mode is the default and can\nreturn an object that parses but does not match, which the gateway flags in a\n`validation_errors` array rather than failing the request.",
+        "title": "Gateway API v3 Reference",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Gateway API v3 Reference",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 28,
+                "startOffset": 28,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Endpoint",
+                "startOffsetUtf16": 459,
+                "startOffset": 459,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Timeouts and Retry",
+                "startOffsetUtf16": 1048,
+                "startOffset": 1048,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Rate Limits",
+                "startOffsetUtf16": 1666,
+                "startOffset": 1666,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Context Window",
+                "startOffsetUtf16": 2254,
+                "startOffset": 2254,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Structured Output",
+                "startOffsetUtf16": 2753,
+                "startOffset": 2753,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -41795,6 +42023,42 @@
     {
       "name": "corpus/battery-chemistry.md",
       "content": "# Battery Chemistry Notes\n\n## Overview\n\nLithium-ion cells trade energy density against thermal stability. The choice of cathode chemistry sets most of that trade-off before any cell is assembled, which is why pack engineers treat the chemistry decision as the point of no return. Anode and electrolyte choices refine the behaviour, but they cannot rescue a cathode that is unsuitable for the duty cycle.\n\n## Cathode Materials\n\nNickel-rich layered oxides store more energy per unit mass, but they release oxygen at lower temperatures than iron phosphate. That released oxygen can feed a cell fire, so nickel-rich packs need more aggressive thermal management. Iron phosphate sacrifices energy density in exchange for a much higher decomposition temperature, which is why it dominates applications where abuse tolerance matters more than range.\n\n## Thermal Runaway\n\nThermal runaway begins when internal heat generation outpaces heat removal. Once the separator melts, the cell shorts internally and the reaction becomes self-sustaining within seconds. Propagation to neighbouring cells is driven by conducted heat, so the spacing and the inter-cell material are as important as the chemistry itself.",
+      "loader": {
+        "source": "# Battery Chemistry Notes\n\n## Overview\n\nLithium-ion cells trade energy density against thermal stability. The choice of cathode chemistry sets most of that trade-off before any cell is assembled, which is why pack engineers treat the chemistry decision as the point of no return. Anode and electrolyte choices refine the behaviour, but they cannot rescue a cathode that is unsuitable for the duty cycle.\n\n## Cathode Materials\n\nNickel-rich layered oxides store more energy per unit mass, but they release oxygen at lower temperatures than iron phosphate. That released oxygen can feed a cell fire, so nickel-rich packs need more aggressive thermal management. Iron phosphate sacrifices energy density in exchange for a much higher decomposition temperature, which is why it dominates applications where abuse tolerance matters more than range.\n\n## Thermal Runaway\n\nThermal runaway begins when internal heat generation outpaces heat removal. Once the separator melts, the cell shorts internally and the reaction becomes self-sustaining within seconds. Propagation to neighbouring cells is driven by conducted heat, so the spacing and the inter-cell material are as important as the chemistry itself.\n",
+        "content": "# Battery Chemistry Notes\n\n## Overview\n\nLithium-ion cells trade energy density against thermal stability. The choice of cathode chemistry sets most of that trade-off before any cell is assembled, which is why pack engineers treat the chemistry decision as the point of no return. Anode and electrolyte choices refine the behaviour, but they cannot rescue a cathode that is unsuitable for the duty cycle.\n\n## Cathode Materials\n\nNickel-rich layered oxides store more energy per unit mass, but they release oxygen at lower temperatures than iron phosphate. That released oxygen can feed a cell fire, so nickel-rich packs need more aggressive thermal management. Iron phosphate sacrifices energy density in exchange for a much higher decomposition temperature, which is why it dominates applications where abuse tolerance matters more than range.\n\n## Thermal Runaway\n\nThermal runaway begins when internal heat generation outpaces heat removal. Once the separator melts, the cell shorts internally and the reaction becomes self-sustaining within seconds. Propagation to neighbouring cells is driven by conducted heat, so the spacing and the inter-cell material are as important as the chemistry itself.",
+        "title": "Battery Chemistry Notes",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Battery Chemistry Notes",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 27,
+                "startOffset": 27,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Cathode Materials",
+                "startOffsetUtf16": 405,
+                "startOffset": 405,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Thermal Runaway",
+                "startOffsetUtf16": 844,
+                "startOffset": 844,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -45622,6 +45886,42 @@
     {
       "name": "corpus/chinese-tea-storage.md",
       "content": "# 茶叶储存指南\n\n## 概述\n\n茶叶储存的核心是控制湿度、温度和氧气。绿茶最容易氧化变质，需要低温密封保存；黑茶等后发酵茶则需要少量空气才能继续转化。\n\n## 湿度控制\n\n相对湿度应保持在百分之五十以下，湿度过高会让茶叶吸潮并滋生霉菌。干燥剂需要定期更换，因为吸潮饱和后它不再起作用，反而会把水分重新释放回容器。\n\n## 温度控制\n\n短期存放可以冷藏，但取出后必须等到恢复室温再打开包装，否则冷凝水会直接落在茶叶上。长期存放更适合冷冻，并且分装成小份，避免反复解冻。",
+      "loader": {
+        "source": "# 茶叶储存指南\n\n## 概述\n\n茶叶储存的核心是控制湿度、温度和氧气。绿茶最容易氧化变质，需要低温密封保存；黑茶等后发酵茶则需要少量空气才能继续转化。\n\n## 湿度控制\n\n相对湿度应保持在百分之五十以下，湿度过高会让茶叶吸潮并滋生霉菌。干燥剂需要定期更换，因为吸潮饱和后它不再起作用，反而会把水分重新释放回容器。\n\n## 温度控制\n\n短期存放可以冷藏，但取出后必须等到恢复室温再打开包装，否则冷凝水会直接落在茶叶上。长期存放更适合冷冻，并且分装成小份，避免反复解冻。\n",
+        "content": "# 茶叶储存指南\n\n## 概述\n\n茶叶储存的核心是控制湿度、温度和氧气。绿茶最容易氧化变质，需要低温密封保存；黑茶等后发酵茶则需要少量空气才能继续转化。\n\n## 湿度控制\n\n相对湿度应保持在百分之五十以下，湿度过高会让茶叶吸潮并滋生霉菌。干燥剂需要定期更换，因为吸潮饱和后它不再起作用，反而会把水分重新释放回容器。\n\n## 温度控制\n\n短期存放可以冷藏，但取出后必须等到恢复室温再打开包装，否则冷凝水会直接落在茶叶上。长期存放更适合冷冻，并且分装成小份，避免反复解冻。",
+        "title": "茶叶储存指南",
+        "sections": [
+          {
+            "level": 1,
+            "title": "茶叶储存指南",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "概述",
+                "startOffsetUtf16": 10,
+                "startOffset": 22,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "湿度控制",
+                "startOffsetUtf16": 78,
+                "startOffset": 212,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "温度控制",
+                "startOffsetUtf16": 159,
+                "startOffset": 441,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -46946,6 +47246,63 @@
     {
       "name": "corpus/coastal-monitoring.md",
       "content": "# Coastal Monitoring Programme\n\n## Overview\n\nCoastal monitoring tracks a tidally driven water body at the land margin. Its distinguishing\nproblem is that the water body moves twice a day: a station is never at the same depth for\ntwo consecutive visits, and a tidal phase that happens to coincide with a sampling run can\ndominate the reading.\n\nThe programme covers four shore stations and two offshore buoys. Shore stations are visited;\nbuoys are instrumented and telemeter. The two kinds of station are reported separately,\nbecause mixing a telemetered series with a visited series is the most common defect in a\ncoastal dataset.\n\n## Sampling Interval\n\nRoutine sampling runs **hourly** at the telemetered buoys and **fortnightly** at the shore\nstations. The hourly cadence exists to resolve the tidal cycle, which a fortnightly cadence\nwould alias into a meaningless slow oscillation; a shore station cannot support it because\neach visit is a boat trip.\n\nEvery telemetered reading is stamped with its tidal phase. A reading without a phase stamp\nis retained but cannot be compared against the shore series, and the quality-control pass\nexcludes it from any cross-station comparison.\n\n## Replicate Samples\n\nField teams collect **three replicate samples** at each shore station. Three is the standard\nfor the programme because the boat trip, not the analysis, dominates the cost, so an extra\nreplicate is nearly free once the team is on site — but only three are taken, because the\nshore stations are well mixed and the fourth replicate has never changed a decision.\n\nBuoys do not take replicates in the sampling sense; they take a burst of 30 readings over\n60 seconds and report the median. The median is used rather than the mean because a single\nwave splash is a large positive outlier in exactly the quantities a buoy measures.\n\n## Sensor Depth\n\nThe shore stations carry a sensor at **1 metre below the surface**, and the offshore buoys\ncarry a sensor at **2 metres below the surface**. The buoy depth is greater because a buoy\nin the wave zone is repeatedly lifted and dropped by swell, and a sensor closer to the\nsurface is out of the water a meaningful fraction of the time.\n\nBoth depths are recorded as depth below the *instantaneous* surface. Coastal sensors are the\nonly programme where the surface reference changes fast enough to matter within a single\nreading, so the timestamp and the depth are recorded together and neither is meaningful\nalone.\n\n## Parameters\n\nThe core parameters are water temperature, salinity, turbidity and wave height. Coastal\nadds wave height, which no other programme records, and salinity, which only the estuary\nprogramme also records but for a different reason.\n\nWave height is recorded as significant wave height, the mean of the highest third of waves\nin the burst, not as the maximum. The maximum is recorded separately and is not used for\ntrend analysis because it is dominated by rare events.\n\n## Quality Control\n\nTelemetered readings are passed through a spike filter that rejects a value more than four\nstandard deviations from its 24-hour rolling mean. The filter has an override: a reading\nthat is also accompanied by a wave height above the 99th percentile is retained rather than\nrejected, on the grounds that a storm is exactly when an unusual value is most likely to be\nreal.\n\nShore stations use a field blank and a blind duplicate, as the river and reservoir\nprogrammes do. A station whose duplicate differs by more than 25 percent is re-visited,\nwhich is a looser threshold than the reservoir programme's 20 percent because a coastal\nstation is inherently noisier and a tighter threshold flagged almost every visit.",
+      "loader": {
+        "source": "# Coastal Monitoring Programme\n\n## Overview\n\nCoastal monitoring tracks a tidally driven water body at the land margin. Its distinguishing\nproblem is that the water body moves twice a day: a station is never at the same depth for\ntwo consecutive visits, and a tidal phase that happens to coincide with a sampling run can\ndominate the reading.\n\nThe programme covers four shore stations and two offshore buoys. Shore stations are visited;\nbuoys are instrumented and telemeter. The two kinds of station are reported separately,\nbecause mixing a telemetered series with a visited series is the most common defect in a\ncoastal dataset.\n\n## Sampling Interval\n\nRoutine sampling runs **hourly** at the telemetered buoys and **fortnightly** at the shore\nstations. The hourly cadence exists to resolve the tidal cycle, which a fortnightly cadence\nwould alias into a meaningless slow oscillation; a shore station cannot support it because\neach visit is a boat trip.\n\nEvery telemetered reading is stamped with its tidal phase. A reading without a phase stamp\nis retained but cannot be compared against the shore series, and the quality-control pass\nexcludes it from any cross-station comparison.\n\n## Replicate Samples\n\nField teams collect **three replicate samples** at each shore station. Three is the standard\nfor the programme because the boat trip, not the analysis, dominates the cost, so an extra\nreplicate is nearly free once the team is on site — but only three are taken, because the\nshore stations are well mixed and the fourth replicate has never changed a decision.\n\nBuoys do not take replicates in the sampling sense; they take a burst of 30 readings over\n60 seconds and report the median. The median is used rather than the mean because a single\nwave splash is a large positive outlier in exactly the quantities a buoy measures.\n\n## Sensor Depth\n\nThe shore stations carry a sensor at **1 metre below the surface**, and the offshore buoys\ncarry a sensor at **2 metres below the surface**. The buoy depth is greater because a buoy\nin the wave zone is repeatedly lifted and dropped by swell, and a sensor closer to the\nsurface is out of the water a meaningful fraction of the time.\n\nBoth depths are recorded as depth below the *instantaneous* surface. Coastal sensors are the\nonly programme where the surface reference changes fast enough to matter within a single\nreading, so the timestamp and the depth are recorded together and neither is meaningful\nalone.\n\n## Parameters\n\nThe core parameters are water temperature, salinity, turbidity and wave height. Coastal\nadds wave height, which no other programme records, and salinity, which only the estuary\nprogramme also records but for a different reason.\n\nWave height is recorded as significant wave height, the mean of the highest third of waves\nin the burst, not as the maximum. The maximum is recorded separately and is not used for\ntrend analysis because it is dominated by rare events.\n\n## Quality Control\n\nTelemetered readings are passed through a spike filter that rejects a value more than four\nstandard deviations from its 24-hour rolling mean. The filter has an override: a reading\nthat is also accompanied by a wave height above the 99th percentile is retained rather than\nrejected, on the grounds that a storm is exactly when an unusual value is most likely to be\nreal.\n\nShore stations use a field blank and a blind duplicate, as the river and reservoir\nprogrammes do. A station whose duplicate differs by more than 25 percent is re-visited,\nwhich is a looser threshold than the reservoir programme's 20 percent because a coastal\nstation is inherently noisier and a tighter threshold flagged almost every visit.\n",
+        "content": "# Coastal Monitoring Programme\n\n## Overview\n\nCoastal monitoring tracks a tidally driven water body at the land margin. Its distinguishing\nproblem is that the water body moves twice a day: a station is never at the same depth for\ntwo consecutive visits, and a tidal phase that happens to coincide with a sampling run can\ndominate the reading.\n\nThe programme covers four shore stations and two offshore buoys. Shore stations are visited;\nbuoys are instrumented and telemeter. The two kinds of station are reported separately,\nbecause mixing a telemetered series with a visited series is the most common defect in a\ncoastal dataset.\n\n## Sampling Interval\n\nRoutine sampling runs **hourly** at the telemetered buoys and **fortnightly** at the shore\nstations. The hourly cadence exists to resolve the tidal cycle, which a fortnightly cadence\nwould alias into a meaningless slow oscillation; a shore station cannot support it because\neach visit is a boat trip.\n\nEvery telemetered reading is stamped with its tidal phase. A reading without a phase stamp\nis retained but cannot be compared against the shore series, and the quality-control pass\nexcludes it from any cross-station comparison.\n\n## Replicate Samples\n\nField teams collect **three replicate samples** at each shore station. Three is the standard\nfor the programme because the boat trip, not the analysis, dominates the cost, so an extra\nreplicate is nearly free once the team is on site — but only three are taken, because the\nshore stations are well mixed and the fourth replicate has never changed a decision.\n\nBuoys do not take replicates in the sampling sense; they take a burst of 30 readings over\n60 seconds and report the median. The median is used rather than the mean because a single\nwave splash is a large positive outlier in exactly the quantities a buoy measures.\n\n## Sensor Depth\n\nThe shore stations carry a sensor at **1 metre below the surface**, and the offshore buoys\ncarry a sensor at **2 metres below the surface**. The buoy depth is greater because a buoy\nin the wave zone is repeatedly lifted and dropped by swell, and a sensor closer to the\nsurface is out of the water a meaningful fraction of the time.\n\nBoth depths are recorded as depth below the *instantaneous* surface. Coastal sensors are the\nonly programme where the surface reference changes fast enough to matter within a single\nreading, so the timestamp and the depth are recorded together and neither is meaningful\nalone.\n\n## Parameters\n\nThe core parameters are water temperature, salinity, turbidity and wave height. Coastal\nadds wave height, which no other programme records, and salinity, which only the estuary\nprogramme also records but for a different reason.\n\nWave height is recorded as significant wave height, the mean of the highest third of waves\nin the burst, not as the maximum. The maximum is recorded separately and is not used for\ntrend analysis because it is dominated by rare events.\n\n## Quality Control\n\nTelemetered readings are passed through a spike filter that rejects a value more than four\nstandard deviations from its 24-hour rolling mean. The filter has an override: a reading\nthat is also accompanied by a wave height above the 99th percentile is retained rather than\nrejected, on the grounds that a storm is exactly when an unusual value is most likely to be\nreal.\n\nShore stations use a field blank and a blind duplicate, as the river and reservoir\nprogrammes do. A station whose duplicate differs by more than 25 percent is re-visited,\nwhich is a looser threshold than the reservoir programme's 20 percent because a coastal\nstation is inherently noisier and a tighter threshold flagged almost every visit.",
+        "title": "Coastal Monitoring Programme",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Coastal Monitoring Programme",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 32,
+                "startOffset": 32,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sampling Interval",
+                "startOffsetUtf16": 631,
+                "startOffset": 631,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Replicate Samples",
+                "startOffsetUtf16": 1184,
+                "startOffset": 1184,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sensor Depth",
+                "startOffsetUtf16": 1831,
+                "startOffset": 1833,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Parameters",
+                "startOffsetUtf16": 2459,
+                "startOffset": 2461,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Quality Control",
+                "startOffsetUtf16": 2939,
+                "startOffset": 2941,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -58650,6 +59007,63 @@
     {
       "name": "corpus/estuary-monitoring.md",
       "content": "# Estuary Monitoring Programme\n\n## Overview\n\nEstuary monitoring tracks the mixing zone where a river meets the sea. Its distinguishing\nproblem is that the water body has a gradient in all three dimensions at once: salinity and\nturbidity change sharply over a few kilometres, and the position of that gradient moves with\nthe tide and with river flow.\n\nThe programme covers two estuaries, each with a transect of five stations running from the\nfreshwater end to the mouth. A transect is the unit of reporting, not a station, because a\nsingle station in an estuary describes a position in a gradient that has moved by the time\nthe next station is sampled.\n\n## Sampling Interval\n\nRoutine sampling runs **daily** at the two lowest stations and **fortnightly** along the\nrest of the transect. Daily sampling at the lower stations is used to track the salt wedge,\nwhose position responds to the tide within hours; the upper transect responds to river flow\nover days and does not need it.\n\nTransect sampling is run on the ebb tide, and every station is occupied within a single ebb\nto keep the transect a snapshot rather than a sequence. A transect that overruns its ebb is\ndiscarded and repeated, because a transect sampled across a tidal reversal is not a gradient.\n\n## Replicate Samples\n\nField teams collect **five replicate samples** at each transect station, the highest of any\nprogramme in the network. Five because the estuary gradient means two samples taken a metre\napart can differ more than two samples taken a kilometre apart at a well-mixed site; the\nwithin-station variance is high enough that three replicates do not estimate a mean reliably.\n\nReplicates are taken as a spatial cross rather than as a sequence: one at the nominal\nposition and four at 25 metres on each axis. A sequential set of replicates would all sample\nthe same parcel of water and would understate the variance that matters.\n\n## Sensor Depth\n\nTransect stations carry sensors at **2 metres below the surface** and at 1 metre above the\nbed, paired so that the vertical salinity difference can be computed directly. The surface\ndepth is fixed at 2 metres rather than at 1 metre to keep the sensor below the freshwater\nlens that floats on the saline layer at the freshwater end.\n\nThe paired depths are the programme's defining feature. A single sensor in an estuary cannot\ndistinguish a change in salinity from a change in where the halocline sits, and those are\ndifferent findings.\n\n## Parameters\n\nThe core parameters are salinity, turbidity, dissolved oxygen and temperature. Estuary adds\nthe position of the turbidity maximum, which is the programme's headline product and is not\nrecorded by any other programme.\n\nThe turbidity maximum is reported as a distance from the freshwater end, not as a turbidity\nvalue. Its position moves several kilometres over a tidal cycle, and a turbidity value\nwithout a position cannot distinguish a stationary maximum from a passing one.\n\n## Quality Control\n\nEvery transect includes one blind duplicate at a randomly chosen station. Precision is\nestimated per transect rather than per station, because the quantity the programme reports\nis a gradient and the error that matters is the error in the gradient.\n\nA transect whose blind duplicate differs by more than 30 percent is repeated. The threshold\nis looser than any other programme's, and deliberately so: an estuary's true variance is\ngenuinely larger, and a tighter threshold would cause every transect to be repeated, which\nin practice means none of them are.",
+      "loader": {
+        "source": "# Estuary Monitoring Programme\n\n## Overview\n\nEstuary monitoring tracks the mixing zone where a river meets the sea. Its distinguishing\nproblem is that the water body has a gradient in all three dimensions at once: salinity and\nturbidity change sharply over a few kilometres, and the position of that gradient moves with\nthe tide and with river flow.\n\nThe programme covers two estuaries, each with a transect of five stations running from the\nfreshwater end to the mouth. A transect is the unit of reporting, not a station, because a\nsingle station in an estuary describes a position in a gradient that has moved by the time\nthe next station is sampled.\n\n## Sampling Interval\n\nRoutine sampling runs **daily** at the two lowest stations and **fortnightly** along the\nrest of the transect. Daily sampling at the lower stations is used to track the salt wedge,\nwhose position responds to the tide within hours; the upper transect responds to river flow\nover days and does not need it.\n\nTransect sampling is run on the ebb tide, and every station is occupied within a single ebb\nto keep the transect a snapshot rather than a sequence. A transect that overruns its ebb is\ndiscarded and repeated, because a transect sampled across a tidal reversal is not a gradient.\n\n## Replicate Samples\n\nField teams collect **five replicate samples** at each transect station, the highest of any\nprogramme in the network. Five because the estuary gradient means two samples taken a metre\napart can differ more than two samples taken a kilometre apart at a well-mixed site; the\nwithin-station variance is high enough that three replicates do not estimate a mean reliably.\n\nReplicates are taken as a spatial cross rather than as a sequence: one at the nominal\nposition and four at 25 metres on each axis. A sequential set of replicates would all sample\nthe same parcel of water and would understate the variance that matters.\n\n## Sensor Depth\n\nTransect stations carry sensors at **2 metres below the surface** and at 1 metre above the\nbed, paired so that the vertical salinity difference can be computed directly. The surface\ndepth is fixed at 2 metres rather than at 1 metre to keep the sensor below the freshwater\nlens that floats on the saline layer at the freshwater end.\n\nThe paired depths are the programme's defining feature. A single sensor in an estuary cannot\ndistinguish a change in salinity from a change in where the halocline sits, and those are\ndifferent findings.\n\n## Parameters\n\nThe core parameters are salinity, turbidity, dissolved oxygen and temperature. Estuary adds\nthe position of the turbidity maximum, which is the programme's headline product and is not\nrecorded by any other programme.\n\nThe turbidity maximum is reported as a distance from the freshwater end, not as a turbidity\nvalue. Its position moves several kilometres over a tidal cycle, and a turbidity value\nwithout a position cannot distinguish a stationary maximum from a passing one.\n\n## Quality Control\n\nEvery transect includes one blind duplicate at a randomly chosen station. Precision is\nestimated per transect rather than per station, because the quantity the programme reports\nis a gradient and the error that matters is the error in the gradient.\n\nA transect whose blind duplicate differs by more than 30 percent is repeated. The threshold\nis looser than any other programme's, and deliberately so: an estuary's true variance is\ngenuinely larger, and a tighter threshold would cause every transect to be repeated, which\nin practice means none of them are.\n",
+        "content": "# Estuary Monitoring Programme\n\n## Overview\n\nEstuary monitoring tracks the mixing zone where a river meets the sea. Its distinguishing\nproblem is that the water body has a gradient in all three dimensions at once: salinity and\nturbidity change sharply over a few kilometres, and the position of that gradient moves with\nthe tide and with river flow.\n\nThe programme covers two estuaries, each with a transect of five stations running from the\nfreshwater end to the mouth. A transect is the unit of reporting, not a station, because a\nsingle station in an estuary describes a position in a gradient that has moved by the time\nthe next station is sampled.\n\n## Sampling Interval\n\nRoutine sampling runs **daily** at the two lowest stations and **fortnightly** along the\nrest of the transect. Daily sampling at the lower stations is used to track the salt wedge,\nwhose position responds to the tide within hours; the upper transect responds to river flow\nover days and does not need it.\n\nTransect sampling is run on the ebb tide, and every station is occupied within a single ebb\nto keep the transect a snapshot rather than a sequence. A transect that overruns its ebb is\ndiscarded and repeated, because a transect sampled across a tidal reversal is not a gradient.\n\n## Replicate Samples\n\nField teams collect **five replicate samples** at each transect station, the highest of any\nprogramme in the network. Five because the estuary gradient means two samples taken a metre\napart can differ more than two samples taken a kilometre apart at a well-mixed site; the\nwithin-station variance is high enough that three replicates do not estimate a mean reliably.\n\nReplicates are taken as a spatial cross rather than as a sequence: one at the nominal\nposition and four at 25 metres on each axis. A sequential set of replicates would all sample\nthe same parcel of water and would understate the variance that matters.\n\n## Sensor Depth\n\nTransect stations carry sensors at **2 metres below the surface** and at 1 metre above the\nbed, paired so that the vertical salinity difference can be computed directly. The surface\ndepth is fixed at 2 metres rather than at 1 metre to keep the sensor below the freshwater\nlens that floats on the saline layer at the freshwater end.\n\nThe paired depths are the programme's defining feature. A single sensor in an estuary cannot\ndistinguish a change in salinity from a change in where the halocline sits, and those are\ndifferent findings.\n\n## Parameters\n\nThe core parameters are salinity, turbidity, dissolved oxygen and temperature. Estuary adds\nthe position of the turbidity maximum, which is the programme's headline product and is not\nrecorded by any other programme.\n\nThe turbidity maximum is reported as a distance from the freshwater end, not as a turbidity\nvalue. Its position moves several kilometres over a tidal cycle, and a turbidity value\nwithout a position cannot distinguish a stationary maximum from a passing one.\n\n## Quality Control\n\nEvery transect includes one blind duplicate at a randomly chosen station. Precision is\nestimated per transect rather than per station, because the quantity the programme reports\nis a gradient and the error that matters is the error in the gradient.\n\nA transect whose blind duplicate differs by more than 30 percent is repeated. The threshold\nis looser than any other programme's, and deliberately so: an estuary's true variance is\ngenuinely larger, and a tighter threshold would cause every transect to be repeated, which\nin practice means none of them are.",
+        "title": "Estuary Monitoring Programme",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Estuary Monitoring Programme",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 32,
+                "startOffset": 32,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sampling Interval",
+                "startOffsetUtf16": 654,
+                "startOffset": 654,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Replicate Samples",
+                "startOffsetUtf16": 1261,
+                "startOffset": 1261,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sensor Depth",
+                "startOffsetUtf16": 1904,
+                "startOffset": 1904,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Parameters",
+                "startOffsetUtf16": 2458,
+                "startOffset": 2458,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Quality Control",
+                "startOffsetUtf16": 2950,
+                "startOffset": 2950,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -69959,6 +70373,42 @@
     {
       "name": "corpus/fermentation.md",
       "content": "# Fermentation Field Notes\n\n## Overview\n\nLactic acid fermentation preserves vegetables by lowering the pH below the level where spoilage organisms can grow. The process needs salt, an anaerobic environment and time. The salt is not there for flavour alone; it selects for the bacteria the process depends on and suppresses the ones that would soften the vegetable.\n\n## Lactic Acid Pathway\n\nSalt-tolerant lactic acid bacteria dominate the early brine and produce acid that suppresses their competitors. The acidification is fastest between twenty and twenty-four degrees Celsius. Below that range the process still works but proceeds slowly enough that spoilage organisms have time to establish, which is why a cool cellar is a risk as well as an advantage.\n\n## Salt Ratio\n\nThe salt concentration is usually expressed as a percentage of the vegetable weight, not the water weight. Two percent is the common starting point; a weaker brine risks soft vegetables, a stronger one slows fermentation. The percentage must be weighed rather than measured by volume, because the density of salt varies with how it is packed.",
+      "loader": {
+        "source": "# Fermentation Field Notes\n\n## Overview\n\nLactic acid fermentation preserves vegetables by lowering the pH below the level where spoilage organisms can grow. The process needs salt, an anaerobic environment and time. The salt is not there for flavour alone; it selects for the bacteria the process depends on and suppresses the ones that would soften the vegetable.\n\n## Lactic Acid Pathway\n\nSalt-tolerant lactic acid bacteria dominate the early brine and produce acid that suppresses their competitors. The acidification is fastest between twenty and twenty-four degrees Celsius. Below that range the process still works but proceeds slowly enough that spoilage organisms have time to establish, which is why a cool cellar is a risk as well as an advantage.\n\n## Salt Ratio\n\nThe salt concentration is usually expressed as a percentage of the vegetable weight, not the water weight. Two percent is the common starting point; a weaker brine risks soft vegetables, a stronger one slows fermentation. The percentage must be weighed rather than measured by volume, because the density of salt varies with how it is packed.\n",
+        "content": "# Fermentation Field Notes\n\n## Overview\n\nLactic acid fermentation preserves vegetables by lowering the pH below the level where spoilage organisms can grow. The process needs salt, an anaerobic environment and time. The salt is not there for flavour alone; it selects for the bacteria the process depends on and suppresses the ones that would soften the vegetable.\n\n## Lactic Acid Pathway\n\nSalt-tolerant lactic acid bacteria dominate the early brine and produce acid that suppresses their competitors. The acidification is fastest between twenty and twenty-four degrees Celsius. Below that range the process still works but proceeds slowly enough that spoilage organisms have time to establish, which is why a cool cellar is a risk as well as an advantage.\n\n## Salt Ratio\n\nThe salt concentration is usually expressed as a percentage of the vegetable weight, not the water weight. Two percent is the common starting point; a weaker brine risks soft vegetables, a stronger one slows fermentation. The percentage must be weighed rather than measured by volume, because the density of salt varies with how it is packed.",
+        "title": "Fermentation Field Notes",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Fermentation Field Notes",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 28,
+                "startOffset": 28,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Lactic Acid Pathway",
+                "startOffsetUtf16": 366,
+                "startOffset": 366,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Salt Ratio",
+                "startOffsetUtf16": 758,
+                "startOffset": 758,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -73592,6 +74042,42 @@
     {
       "name": "corpus/green-roofs.md",
       "content": "# Green Roof Design\n\n## Overview\n\nA green roof is a planted layer on a building rather than at street level. It cools the building directly by shading the roof membrane and indirectly by evapotranspiration, and it retains rainfall that would otherwise enter the storm sewer.\n\n## Cooling Effect\n\nThe cooling benefit is largest where the planting covers the roof membrane rather than a small decorative strip, because an exposed membrane absorbs far more heat during the day. A continuous planted layer is therefore more effective than the same planted area broken into isolated beds.\n\n## Substrate Depth\n\nSubstrate depth decides which species survive a dry summer. Shallow substrate supports sedums that tolerate drought but provide little insulation, while deeper substrate supports grasses and shrubs with more cooling but a much heavier structural load.",
+      "loader": {
+        "source": "# Green Roof Design\n\n## Overview\n\nA green roof is a planted layer on a building rather than at street level. It cools the building directly by shading the roof membrane and indirectly by evapotranspiration, and it retains rainfall that would otherwise enter the storm sewer.\n\n## Cooling Effect\n\nThe cooling benefit is largest where the planting covers the roof membrane rather than a small decorative strip, because an exposed membrane absorbs far more heat during the day. A continuous planted layer is therefore more effective than the same planted area broken into isolated beds.\n\n## Substrate Depth\n\nSubstrate depth decides which species survive a dry summer. Shallow substrate supports sedums that tolerate drought but provide little insulation, while deeper substrate supports grasses and shrubs with more cooling but a much heavier structural load.\n",
+        "content": "# Green Roof Design\n\n## Overview\n\nA green roof is a planted layer on a building rather than at street level. It cools the building directly by shading the roof membrane and indirectly by evapotranspiration, and it retains rainfall that would otherwise enter the storm sewer.\n\n## Cooling Effect\n\nThe cooling benefit is largest where the planting covers the roof membrane rather than a small decorative strip, because an exposed membrane absorbs far more heat during the day. A continuous planted layer is therefore more effective than the same planted area broken into isolated beds.\n\n## Substrate Depth\n\nSubstrate depth decides which species survive a dry summer. Shallow substrate supports sedums that tolerate drought but provide little insulation, while deeper substrate supports grasses and shrubs with more cooling but a much heavier structural load.",
+        "title": "Green Roof Design",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Green Roof Design",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 21,
+                "startOffset": 21,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Cooling Effect",
+                "startOffsetUtf16": 276,
+                "startOffset": 276,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Substrate Depth",
+                "startOffsetUtf16": 584,
+                "startOffset": 584,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -76385,6 +76871,63 @@
     {
       "name": "corpus/groundwater-monitoring.md",
       "content": "# Groundwater Monitoring Programme\n\n## Overview\n\nGroundwater monitoring tracks water below the surface rather than water in a channel. Its\ndistinguishing problem is that the water body cannot be seen, so every measurement is a\nsample from a borehole that may or may not be connected to the aquifer the programme intends\nto describe.\n\nThe programme covers nine boreholes across three catchments. Eight are monitoring boreholes\nused only for measurement; one is a supply borehole that is also pumped, and its readings\nare reported separately because a pumped borehole's level reflects recent abstraction as\nmuch as the aquifer.\n\n## Sampling Interval\n\nRoutine sampling runs **monthly**, the least frequent cadence in the network. Groundwater\nresponds to rainfall over weeks to months, and a more frequent cadence measures the borehole\nrather than the aquifer: a fortnightly series is dominated by the borehole's own equilibration\nafter each visit, which takes several days.\n\nSupply boreholes are additionally sampled immediately before and after each pumping cycle.\nThose samples are paired and reported as a drawdown and recovery pair, not as routine\nreadings.\n\n## Replicate Samples\n\nField teams collect **two replicate samples** at each borehole, the lowest of any programme\nin the network. Two rather than three because groundwater is well mixed by the time it\nreaches a borehole, and the dominant error is not within-sample variance but the borehole's\nconnection to the aquifer — an error that an extra replicate does not reduce.\n\nBecause two replicates give no way to identify an outlier, any borehole whose two replicates\ndisagree by more than 10 percent is re-sampled entirely rather than resolved statistically.\nTen percent is tighter than any other programme's threshold precisely because there is no\nthird replicate to arbitrate.\n\n## Sensor Depth\n\nBoreholes carry a pressure transducer at **15 metres below the water table**, measured on the\nfirst visit and recorded as an absolute elevation so that a falling water table does not\nsilently change the depth being sampled. The depth is the largest in the network by an order\nof magnitude, which is a property of boreholes rather than a choice.\n\nThe transducer records water level continuously. Water level is the programme's primary\nquantity; chemistry is sampled monthly and level is logged every 15 minutes, and the two are\nreported on separate axes because a single chart of both conceals the pattern in either.\n\n## Parameters\n\nThe core parameters are water level, temperature, specific conductance and nitrate. Groundwater\nadds water level, which is the only parameter in the network that is logged continuously\nrather than sampled.\n\nNitrate is recorded as the primary indicator of agricultural loading, and it is the parameter\nthe programme was established to track. Specific conductance is recorded as a cheap proxy for\nsalinity intrusion in the two coastal boreholes.\n\n## Quality Control\n\nEvery visit records the water level before and after purging. A borehole in which the level\ndoes not recover within 24 hours of purging is flagged, because the purge has drawn from a\nbody of water that is not being recharged and the sample may not represent the aquifer.\n\nBlind duplicates are submitted quarterly rather than per visit, which is the sparsest\nverification in the network. The programme's position is that its dominant uncertainty is the\nborehole-to-aquifer connection, which a duplicate cannot measure, so spending budget on more\nduplicates would buy precision the programme cannot use.",
+      "loader": {
+        "source": "# Groundwater Monitoring Programme\n\n## Overview\n\nGroundwater monitoring tracks water below the surface rather than water in a channel. Its\ndistinguishing problem is that the water body cannot be seen, so every measurement is a\nsample from a borehole that may or may not be connected to the aquifer the programme intends\nto describe.\n\nThe programme covers nine boreholes across three catchments. Eight are monitoring boreholes\nused only for measurement; one is a supply borehole that is also pumped, and its readings\nare reported separately because a pumped borehole's level reflects recent abstraction as\nmuch as the aquifer.\n\n## Sampling Interval\n\nRoutine sampling runs **monthly**, the least frequent cadence in the network. Groundwater\nresponds to rainfall over weeks to months, and a more frequent cadence measures the borehole\nrather than the aquifer: a fortnightly series is dominated by the borehole's own equilibration\nafter each visit, which takes several days.\n\nSupply boreholes are additionally sampled immediately before and after each pumping cycle.\nThose samples are paired and reported as a drawdown and recovery pair, not as routine\nreadings.\n\n## Replicate Samples\n\nField teams collect **two replicate samples** at each borehole, the lowest of any programme\nin the network. Two rather than three because groundwater is well mixed by the time it\nreaches a borehole, and the dominant error is not within-sample variance but the borehole's\nconnection to the aquifer — an error that an extra replicate does not reduce.\n\nBecause two replicates give no way to identify an outlier, any borehole whose two replicates\ndisagree by more than 10 percent is re-sampled entirely rather than resolved statistically.\nTen percent is tighter than any other programme's threshold precisely because there is no\nthird replicate to arbitrate.\n\n## Sensor Depth\n\nBoreholes carry a pressure transducer at **15 metres below the water table**, measured on the\nfirst visit and recorded as an absolute elevation so that a falling water table does not\nsilently change the depth being sampled. The depth is the largest in the network by an order\nof magnitude, which is a property of boreholes rather than a choice.\n\nThe transducer records water level continuously. Water level is the programme's primary\nquantity; chemistry is sampled monthly and level is logged every 15 minutes, and the two are\nreported on separate axes because a single chart of both conceals the pattern in either.\n\n## Parameters\n\nThe core parameters are water level, temperature, specific conductance and nitrate. Groundwater\nadds water level, which is the only parameter in the network that is logged continuously\nrather than sampled.\n\nNitrate is recorded as the primary indicator of agricultural loading, and it is the parameter\nthe programme was established to track. Specific conductance is recorded as a cheap proxy for\nsalinity intrusion in the two coastal boreholes.\n\n## Quality Control\n\nEvery visit records the water level before and after purging. A borehole in which the level\ndoes not recover within 24 hours of purging is flagged, because the purge has drawn from a\nbody of water that is not being recharged and the sample may not represent the aquifer.\n\nBlind duplicates are submitted quarterly rather than per visit, which is the sparsest\nverification in the network. The programme's position is that its dominant uncertainty is the\nborehole-to-aquifer connection, which a duplicate cannot measure, so spending budget on more\nduplicates would buy precision the programme cannot use.\n",
+        "content": "# Groundwater Monitoring Programme\n\n## Overview\n\nGroundwater monitoring tracks water below the surface rather than water in a channel. Its\ndistinguishing problem is that the water body cannot be seen, so every measurement is a\nsample from a borehole that may or may not be connected to the aquifer the programme intends\nto describe.\n\nThe programme covers nine boreholes across three catchments. Eight are monitoring boreholes\nused only for measurement; one is a supply borehole that is also pumped, and its readings\nare reported separately because a pumped borehole's level reflects recent abstraction as\nmuch as the aquifer.\n\n## Sampling Interval\n\nRoutine sampling runs **monthly**, the least frequent cadence in the network. Groundwater\nresponds to rainfall over weeks to months, and a more frequent cadence measures the borehole\nrather than the aquifer: a fortnightly series is dominated by the borehole's own equilibration\nafter each visit, which takes several days.\n\nSupply boreholes are additionally sampled immediately before and after each pumping cycle.\nThose samples are paired and reported as a drawdown and recovery pair, not as routine\nreadings.\n\n## Replicate Samples\n\nField teams collect **two replicate samples** at each borehole, the lowest of any programme\nin the network. Two rather than three because groundwater is well mixed by the time it\nreaches a borehole, and the dominant error is not within-sample variance but the borehole's\nconnection to the aquifer — an error that an extra replicate does not reduce.\n\nBecause two replicates give no way to identify an outlier, any borehole whose two replicates\ndisagree by more than 10 percent is re-sampled entirely rather than resolved statistically.\nTen percent is tighter than any other programme's threshold precisely because there is no\nthird replicate to arbitrate.\n\n## Sensor Depth\n\nBoreholes carry a pressure transducer at **15 metres below the water table**, measured on the\nfirst visit and recorded as an absolute elevation so that a falling water table does not\nsilently change the depth being sampled. The depth is the largest in the network by an order\nof magnitude, which is a property of boreholes rather than a choice.\n\nThe transducer records water level continuously. Water level is the programme's primary\nquantity; chemistry is sampled monthly and level is logged every 15 minutes, and the two are\nreported on separate axes because a single chart of both conceals the pattern in either.\n\n## Parameters\n\nThe core parameters are water level, temperature, specific conductance and nitrate. Groundwater\nadds water level, which is the only parameter in the network that is logged continuously\nrather than sampled.\n\nNitrate is recorded as the primary indicator of agricultural loading, and it is the parameter\nthe programme was established to track. Specific conductance is recorded as a cheap proxy for\nsalinity intrusion in the two coastal boreholes.\n\n## Quality Control\n\nEvery visit records the water level before and after purging. A borehole in which the level\ndoes not recover within 24 hours of purging is flagged, because the purge has drawn from a\nbody of water that is not being recharged and the sample may not represent the aquifer.\n\nBlind duplicates are submitted quarterly rather than per visit, which is the sparsest\nverification in the network. The programme's position is that its dominant uncertainty is the\nborehole-to-aquifer connection, which a duplicate cannot measure, so spending budget on more\nduplicates would buy precision the programme cannot use.",
+        "title": "Groundwater Monitoring Programme",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Groundwater Monitoring Programme",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 36,
+                "startOffset": 36,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sampling Interval",
+                "startOffsetUtf16": 627,
+                "startOffset": 627,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Replicate Samples",
+                "startOffsetUtf16": 1160,
+                "startOffset": 1160,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sensor Depth",
+                "startOffsetUtf16": 1838,
+                "startOffset": 1840,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Parameters",
+                "startOffsetUtf16": 2472,
+                "startOffset": 2474,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Quality Control",
+                "startOffsetUtf16": 2932,
+                "startOffset": 2934,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -87541,6 +88084,42 @@
     {
       "name": "corpus/lake-monitoring.md",
       "content": "# Lake Monitoring Handbook\n\n## Overview\n\nLake monitoring relies on depth profiles rather than a single gauge reading, because a lake stratifies into layers that behave differently. The goal is to track temperature, dissolved oxygen and nutrient concentration through the water column over a full seasonal cycle.\n\n## Thermal Stratification\n\nIn summer the surface layer warms and floats above a cold hypolimnion, separated by a sharp thermocline. Oxygen in the hypolimnion is not replenished while the lake is stratified, so deep-water oxygen declines steadily until autumn mixing resets the column.\n\n## Sampling Protocol\n\nField teams collect three replicate samples at each depth to control for local variability. Samples are refrigerated within one hour and analysed for turbidity before any chemical treatment, since turbidity interferes with most colorimetric assays. Depth is recorded from the profiling sonde, not from the sample line, because the line stretches under its own weight.",
+      "loader": {
+        "source": "# Lake Monitoring Handbook\n\n## Overview\n\nLake monitoring relies on depth profiles rather than a single gauge reading, because a lake stratifies into layers that behave differently. The goal is to track temperature, dissolved oxygen and nutrient concentration through the water column over a full seasonal cycle.\n\n## Thermal Stratification\n\nIn summer the surface layer warms and floats above a cold hypolimnion, separated by a sharp thermocline. Oxygen in the hypolimnion is not replenished while the lake is stratified, so deep-water oxygen declines steadily until autumn mixing resets the column.\n\n## Sampling Protocol\n\nField teams collect three replicate samples at each depth to control for local variability. Samples are refrigerated within one hour and analysed for turbidity before any chemical treatment, since turbidity interferes with most colorimetric assays. Depth is recorded from the profiling sonde, not from the sample line, because the line stretches under its own weight.\n",
+        "content": "# Lake Monitoring Handbook\n\n## Overview\n\nLake monitoring relies on depth profiles rather than a single gauge reading, because a lake stratifies into layers that behave differently. The goal is to track temperature, dissolved oxygen and nutrient concentration through the water column over a full seasonal cycle.\n\n## Thermal Stratification\n\nIn summer the surface layer warms and floats above a cold hypolimnion, separated by a sharp thermocline. Oxygen in the hypolimnion is not replenished while the lake is stratified, so deep-water oxygen declines steadily until autumn mixing resets the column.\n\n## Sampling Protocol\n\nField teams collect three replicate samples at each depth to control for local variability. Samples are refrigerated within one hour and analysed for turbidity before any chemical treatment, since turbidity interferes with most colorimetric assays. Depth is recorded from the profiling sonde, not from the sample line, because the line stretches under its own weight.",
+        "title": "Lake Monitoring Handbook",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Lake Monitoring Handbook",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 28,
+                "startOffset": 28,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Thermal Stratification",
+                "startOffsetUtf16": 313,
+                "startOffset": 313,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sampling Protocol",
+                "startOffsetUtf16": 599,
+                "startOffset": 599,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -90781,6 +91360,42 @@
     {
       "name": "corpus/orchard-pollination.md",
       "content": "# Orchard Pollination Guide\n\n## Overview\n\nMost apple varieties cannot set fruit from their own pollen. Growers therefore plant compatible polliniser trees and depend on insects to move pollen between them. The polliniser must flower at the same time as the main variety, because pollen that is available a week late is pollen that the main crop cannot use.\n\n## Bee Activity\n\nHoneybees forage only when the temperature is above roughly twelve degrees Celsius, so a cold bloom week can leave flowers unpollinated even when hives are present. Mason bees fly at lower temperatures and can partly cover that gap. Growers in frost-prone valleys often stock both species so that the bloom is not lost to a single cold morning.\n\n## Frost Risk\n\nA late frost during full bloom destroys the flower's ovary rather than the petals, so damage is invisible for several days. Growers often run wind machines to mix warmer air from above the inversion layer. The machines are worth running only while the inversion exists, which is why they are switched on from a temperature reading rather than a schedule.",
+      "loader": {
+        "source": "# Orchard Pollination Guide\n\n## Overview\n\nMost apple varieties cannot set fruit from their own pollen. Growers therefore plant compatible polliniser trees and depend on insects to move pollen between them. The polliniser must flower at the same time as the main variety, because pollen that is available a week late is pollen that the main crop cannot use.\n\n## Bee Activity\n\nHoneybees forage only when the temperature is above roughly twelve degrees Celsius, so a cold bloom week can leave flowers unpollinated even when hives are present. Mason bees fly at lower temperatures and can partly cover that gap. Growers in frost-prone valleys often stock both species so that the bloom is not lost to a single cold morning.\n\n## Frost Risk\n\nA late frost during full bloom destroys the flower's ovary rather than the petals, so damage is invisible for several days. Growers often run wind machines to mix warmer air from above the inversion layer. The machines are worth running only while the inversion exists, which is why they are switched on from a temperature reading rather than a schedule.\n",
+        "content": "# Orchard Pollination Guide\n\n## Overview\n\nMost apple varieties cannot set fruit from their own pollen. Growers therefore plant compatible polliniser trees and depend on insects to move pollen between them. The polliniser must flower at the same time as the main variety, because pollen that is available a week late is pollen that the main crop cannot use.\n\n## Bee Activity\n\nHoneybees forage only when the temperature is above roughly twelve degrees Celsius, so a cold bloom week can leave flowers unpollinated even when hives are present. Mason bees fly at lower temperatures and can partly cover that gap. Growers in frost-prone valleys often stock both species so that the bloom is not lost to a single cold morning.\n\n## Frost Risk\n\nA late frost during full bloom destroys the flower's ovary rather than the petals, so damage is invisible for several days. Growers often run wind machines to mix warmer air from above the inversion layer. The machines are worth running only while the inversion exists, which is why they are switched on from a temperature reading rather than a schedule.",
+        "title": "Orchard Pollination Guide",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Orchard Pollination Guide",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 29,
+                "startOffset": 29,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Bee Activity",
+                "startOffsetUtf16": 358,
+                "startOffset": 358,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Frost Risk",
+                "startOffsetUtf16": 721,
+                "startOffset": 721,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -94374,6 +94989,63 @@
     {
       "name": "corpus/reservoir-monitoring.md",
       "content": "# Reservoir Monitoring Programme\n\n## Overview\n\nReservoir monitoring tracks a standing water body whose level is managed rather than\nnatural. The programme's distinguishing problem is that the water body has an operator:\nevery measurement has to be paired with the release schedule, or a change in a reading is\nindistinguishable from a change in how the reservoir was run that week.\n\nThe programme covers three reservoirs in the upland basin. Each has a fixed monitoring\nstation at the dam face and two floating stations whose position is recorded on every\nvisit, because a reservoir's surface area changes enough over a season to move a floating\nstation hundreds of metres without anyone touching it.\n\n## Sampling Interval\n\nRoutine sampling runs **fortnightly**, on a fixed Tuesday, so that the interval is\nconsistent across sites and operators. A fortnightly cadence is a deliberate compromise:\nweekly was found to double cost without changing any trend, and monthly aliased against\nthe operator's own drawdown cycle, which is also roughly monthly and made the series very\nhard to interpret.\n\nEvent sampling is triggered by any release exceeding 20 percent of live capacity in a\nsingle day. Event samples are additional to the routine cadence and are labelled with the\nrelease event rather than with the calendar.\n\n## Replicate Samples\n\nField teams collect **four replicate samples** at each station to control for local\nvariability. Four rather than three because the reservoir stations sit in a drawdown zone\nwhere wind-driven mixing produces an occasional outlier; with three replicates a single\noutlier is a third of the mean, and with four it can be identified and excluded on a stated\nrule rather than discarded by feel.\n\nReplicates are taken within a 15-minute window. A replicate that falls outside that window\nis recorded but excluded from the mean, because the reservoir can stratify and destratify on\nthat timescale in summer.\n\n## Sensor Depth\n\nThe fixed station carries a sensor string at **5 metres below the surface**, and the two\nfloating stations carry a single sensor at **1 metre below the surface**. The asymmetry is\nintentional: the dam face is deep and well mixed, while the floating stations are in the\ndrawdown zone where the interesting gradient is in the top metre.\n\nDepth is recorded as depth below the *current* surface, not below full capacity. Because the\nsurface moves, a sensor on a fixed string is at a different absolute elevation at different\ntimes, and the programme records both so that a reader can reconstruct which was meant.\n\n## Parameters\n\nThe core parameters are water temperature, dissolved oxygen, turbidity and chlorophyll-a.\nReservoir-specific parameters are residence time and drawdown rate, neither of which the\nriver or lake programmes record because neither has an operator-controlled outlet.\n\nTurbidity is recorded as the primary indicator of sediment resuspension during drawdown,\nwhich is the process the programme exists to quantify. Chlorophyll-a is recorded as the\nprimary indicator of the algal response to nutrient loading.\n\n## Quality Control\n\nEvery routine visit includes one field blank and one duplicate submitted blind. The\nduplicate is used to estimate within-station precision; the blank is used to detect\ncontamination introduced by the sampling kit rather than by the reservoir.\n\nA station whose blind duplicate differs by more than 20 percent is flagged and re-visited\nwithin seven days. Two consecutive flags retire the station's sensor string, because the\nmost common cause of a persistent discrepancy is a drifting sensor rather than a genuinely\npatchy water body.",
+      "loader": {
+        "source": "# Reservoir Monitoring Programme\n\n## Overview\n\nReservoir monitoring tracks a standing water body whose level is managed rather than\nnatural. The programme's distinguishing problem is that the water body has an operator:\nevery measurement has to be paired with the release schedule, or a change in a reading is\nindistinguishable from a change in how the reservoir was run that week.\n\nThe programme covers three reservoirs in the upland basin. Each has a fixed monitoring\nstation at the dam face and two floating stations whose position is recorded on every\nvisit, because a reservoir's surface area changes enough over a season to move a floating\nstation hundreds of metres without anyone touching it.\n\n## Sampling Interval\n\nRoutine sampling runs **fortnightly**, on a fixed Tuesday, so that the interval is\nconsistent across sites and operators. A fortnightly cadence is a deliberate compromise:\nweekly was found to double cost without changing any trend, and monthly aliased against\nthe operator's own drawdown cycle, which is also roughly monthly and made the series very\nhard to interpret.\n\nEvent sampling is triggered by any release exceeding 20 percent of live capacity in a\nsingle day. Event samples are additional to the routine cadence and are labelled with the\nrelease event rather than with the calendar.\n\n## Replicate Samples\n\nField teams collect **four replicate samples** at each station to control for local\nvariability. Four rather than three because the reservoir stations sit in a drawdown zone\nwhere wind-driven mixing produces an occasional outlier; with three replicates a single\noutlier is a third of the mean, and with four it can be identified and excluded on a stated\nrule rather than discarded by feel.\n\nReplicates are taken within a 15-minute window. A replicate that falls outside that window\nis recorded but excluded from the mean, because the reservoir can stratify and destratify on\nthat timescale in summer.\n\n## Sensor Depth\n\nThe fixed station carries a sensor string at **5 metres below the surface**, and the two\nfloating stations carry a single sensor at **1 metre below the surface**. The asymmetry is\nintentional: the dam face is deep and well mixed, while the floating stations are in the\ndrawdown zone where the interesting gradient is in the top metre.\n\nDepth is recorded as depth below the *current* surface, not below full capacity. Because the\nsurface moves, a sensor on a fixed string is at a different absolute elevation at different\ntimes, and the programme records both so that a reader can reconstruct which was meant.\n\n## Parameters\n\nThe core parameters are water temperature, dissolved oxygen, turbidity and chlorophyll-a.\nReservoir-specific parameters are residence time and drawdown rate, neither of which the\nriver or lake programmes record because neither has an operator-controlled outlet.\n\nTurbidity is recorded as the primary indicator of sediment resuspension during drawdown,\nwhich is the process the programme exists to quantify. Chlorophyll-a is recorded as the\nprimary indicator of the algal response to nutrient loading.\n\n## Quality Control\n\nEvery routine visit includes one field blank and one duplicate submitted blind. The\nduplicate is used to estimate within-station precision; the blank is used to detect\ncontamination introduced by the sampling kit rather than by the reservoir.\n\nA station whose blind duplicate differs by more than 20 percent is flagged and re-visited\nwithin seven days. Two consecutive flags retire the station's sensor string, because the\nmost common cause of a persistent discrepancy is a drifting sensor rather than a genuinely\npatchy water body.\n",
+        "content": "# Reservoir Monitoring Programme\n\n## Overview\n\nReservoir monitoring tracks a standing water body whose level is managed rather than\nnatural. The programme's distinguishing problem is that the water body has an operator:\nevery measurement has to be paired with the release schedule, or a change in a reading is\nindistinguishable from a change in how the reservoir was run that week.\n\nThe programme covers three reservoirs in the upland basin. Each has a fixed monitoring\nstation at the dam face and two floating stations whose position is recorded on every\nvisit, because a reservoir's surface area changes enough over a season to move a floating\nstation hundreds of metres without anyone touching it.\n\n## Sampling Interval\n\nRoutine sampling runs **fortnightly**, on a fixed Tuesday, so that the interval is\nconsistent across sites and operators. A fortnightly cadence is a deliberate compromise:\nweekly was found to double cost without changing any trend, and monthly aliased against\nthe operator's own drawdown cycle, which is also roughly monthly and made the series very\nhard to interpret.\n\nEvent sampling is triggered by any release exceeding 20 percent of live capacity in a\nsingle day. Event samples are additional to the routine cadence and are labelled with the\nrelease event rather than with the calendar.\n\n## Replicate Samples\n\nField teams collect **four replicate samples** at each station to control for local\nvariability. Four rather than three because the reservoir stations sit in a drawdown zone\nwhere wind-driven mixing produces an occasional outlier; with three replicates a single\noutlier is a third of the mean, and with four it can be identified and excluded on a stated\nrule rather than discarded by feel.\n\nReplicates are taken within a 15-minute window. A replicate that falls outside that window\nis recorded but excluded from the mean, because the reservoir can stratify and destratify on\nthat timescale in summer.\n\n## Sensor Depth\n\nThe fixed station carries a sensor string at **5 metres below the surface**, and the two\nfloating stations carry a single sensor at **1 metre below the surface**. The asymmetry is\nintentional: the dam face is deep and well mixed, while the floating stations are in the\ndrawdown zone where the interesting gradient is in the top metre.\n\nDepth is recorded as depth below the *current* surface, not below full capacity. Because the\nsurface moves, a sensor on a fixed string is at a different absolute elevation at different\ntimes, and the programme records both so that a reader can reconstruct which was meant.\n\n## Parameters\n\nThe core parameters are water temperature, dissolved oxygen, turbidity and chlorophyll-a.\nReservoir-specific parameters are residence time and drawdown rate, neither of which the\nriver or lake programmes record because neither has an operator-controlled outlet.\n\nTurbidity is recorded as the primary indicator of sediment resuspension during drawdown,\nwhich is the process the programme exists to quantify. Chlorophyll-a is recorded as the\nprimary indicator of the algal response to nutrient loading.\n\n## Quality Control\n\nEvery routine visit includes one field blank and one duplicate submitted blind. The\nduplicate is used to estimate within-station precision; the blank is used to detect\ncontamination introduced by the sampling kit rather than by the reservoir.\n\nA station whose blind duplicate differs by more than 20 percent is flagged and re-visited\nwithin seven days. Two consecutive flags retire the station's sensor string, because the\nmost common cause of a persistent discrepancy is a drifting sensor rather than a genuinely\npatchy water body.",
+        "title": "Reservoir Monitoring Programme",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Reservoir Monitoring Programme",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 34,
+                "startOffset": 34,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sampling Interval",
+                "startOffsetUtf16": 702,
+                "startOffset": 702,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Replicate Samples",
+                "startOffsetUtf16": 1316,
+                "startOffset": 1316,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sensor Depth",
+                "startOffsetUtf16": 1940,
+                "startOffset": 1940,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Parameters",
+                "startOffsetUtf16": 2567,
+                "startOffset": 2567,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Quality Control",
+                "startOffsetUtf16": 3084,
+                "startOffset": 3084,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -105957,6 +106629,42 @@
     {
       "name": "corpus/river-monitoring.md",
       "content": "# River Monitoring Handbook\n\n## Overview\n\nRiver monitoring combines fixed gauges with periodic field surveys. A gauge gives a continuous stage record at one point, while a survey samples many points at one time. Neither alone is enough: the goal is a continuous record of flow, sediment load and water chemistry that a single survey cannot provide, and a survey that can validate what the gauge inferred between visits.\n\n## Sediment Transport\n\nCoarse sediment moves mostly as bedload during high-flow events, while fine sediment travels in suspension even at moderate discharge. Bedload is the harder fraction to measure, because it moves along the bed where instruments are difficult to anchor and the transport is episodic. Suspended sediment, by contrast, can be estimated from a single depth-integrated sample calibrated against turbidity.\n\n## Sampling Protocol\n\nField teams collect three replicate samples at each station to control for local variability. Samples are refrigerated within one hour and analysed for turbidity before any chemical treatment, since turbidity interferes with most colorimetric assays. Replicates are kept separate through analysis so that a disagreement between them is visible as variance rather than averaged away.",
+      "loader": {
+        "source": "# River Monitoring Handbook\n\n## Overview\n\nRiver monitoring combines fixed gauges with periodic field surveys. A gauge gives a continuous stage record at one point, while a survey samples many points at one time. Neither alone is enough: the goal is a continuous record of flow, sediment load and water chemistry that a single survey cannot provide, and a survey that can validate what the gauge inferred between visits.\n\n## Sediment Transport\n\nCoarse sediment moves mostly as bedload during high-flow events, while fine sediment travels in suspension even at moderate discharge. Bedload is the harder fraction to measure, because it moves along the bed where instruments are difficult to anchor and the transport is episodic. Suspended sediment, by contrast, can be estimated from a single depth-integrated sample calibrated against turbidity.\n\n## Sampling Protocol\n\nField teams collect three replicate samples at each station to control for local variability. Samples are refrigerated within one hour and analysed for turbidity before any chemical treatment, since turbidity interferes with most colorimetric assays. Replicates are kept separate through analysis so that a disagreement between them is visible as variance rather than averaged away.\n",
+        "content": "# River Monitoring Handbook\n\n## Overview\n\nRiver monitoring combines fixed gauges with periodic field surveys. A gauge gives a continuous stage record at one point, while a survey samples many points at one time. Neither alone is enough: the goal is a continuous record of flow, sediment load and water chemistry that a single survey cannot provide, and a survey that can validate what the gauge inferred between visits.\n\n## Sediment Transport\n\nCoarse sediment moves mostly as bedload during high-flow events, while fine sediment travels in suspension even at moderate discharge. Bedload is the harder fraction to measure, because it moves along the bed where instruments are difficult to anchor and the transport is episodic. Suspended sediment, by contrast, can be estimated from a single depth-integrated sample calibrated against turbidity.\n\n## Sampling Protocol\n\nField teams collect three replicate samples at each station to control for local variability. Samples are refrigerated within one hour and analysed for turbidity before any chemical treatment, since turbidity interferes with most colorimetric assays. Replicates are kept separate through analysis so that a disagreement between them is visible as variance rather than averaged away.",
+        "title": "River Monitoring Handbook",
+        "sections": [
+          {
+            "level": 1,
+            "title": "River Monitoring Handbook",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 29,
+                "startOffset": 29,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sediment Transport",
+                "startOffsetUtf16": 421,
+                "startOffset": 421,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Sampling Protocol",
+                "startOffsetUtf16": 845,
+                "startOffset": 845,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -109964,6 +110672,42 @@
     {
       "name": "corpus/supercapacitors.md",
       "content": "# Supercapacitor Notes\n\n## Overview\n\nSupercapacitors store charge at a solid-electrolyte interface rather than in a chemical reaction. The absence of a bulk reaction is why they deliver very high power and tolerate hundreds of thousands of cycles, and also why their energy density is far below a lithium-ion cell.\n\n## Charge Storage\n\nCharge is held in an electric double layer formed at the surface of a porous carbon electrode. Because storage is a surface effect, the accessible surface area sets the capacitance, and pores that are too small for the electrolyte ions contribute nothing.\n\n## Thermal Behaviour\n\nSupercapacitors generate little heat during cycling, so their thermal management is far simpler than a battery pack's. The failure mode to watch is overvoltage, which decomposes the electrolyte and vents gas rather than producing the self-sustaining reaction a lithium cell can enter.",
+      "loader": {
+        "source": "# Supercapacitor Notes\n\n## Overview\n\nSupercapacitors store charge at a solid-electrolyte interface rather than in a chemical reaction. The absence of a bulk reaction is why they deliver very high power and tolerate hundreds of thousands of cycles, and also why their energy density is far below a lithium-ion cell.\n\n## Charge Storage\n\nCharge is held in an electric double layer formed at the surface of a porous carbon electrode. Because storage is a surface effect, the accessible surface area sets the capacitance, and pores that are too small for the electrolyte ions contribute nothing.\n\n## Thermal Behaviour\n\nSupercapacitors generate little heat during cycling, so their thermal management is far simpler than a battery pack's. The failure mode to watch is overvoltage, which decomposes the electrolyte and vents gas rather than producing the self-sustaining reaction a lithium cell can enter.\n",
+        "content": "# Supercapacitor Notes\n\n## Overview\n\nSupercapacitors store charge at a solid-electrolyte interface rather than in a chemical reaction. The absence of a bulk reaction is why they deliver very high power and tolerate hundreds of thousands of cycles, and also why their energy density is far below a lithium-ion cell.\n\n## Charge Storage\n\nCharge is held in an electric double layer formed at the surface of a porous carbon electrode. Because storage is a surface effect, the accessible surface area sets the capacitance, and pores that are too small for the electrolyte ions contribute nothing.\n\n## Thermal Behaviour\n\nSupercapacitors generate little heat during cycling, so their thermal management is far simpler than a battery pack's. The failure mode to watch is overvoltage, which decomposes the electrolyte and vents gas rather than producing the self-sustaining reaction a lithium cell can enter.",
+        "title": "Supercapacitor Notes",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Supercapacitor Notes",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 24,
+                "startOffset": 24,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Charge Storage",
+                "startOffsetUtf16": 316,
+                "startOffset": 316,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Thermal Behaviour",
+                "startOffsetUtf16": 592,
+                "startOffset": 592,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -112904,6 +113648,42 @@
     {
       "name": "corpus/tidal-energy.md",
       "content": "# Tidal Energy Briefing\n\n## Overview\n\nTidal energy is predictable decades ahead, unlike wind or solar. The resource is concentrated at sites with a large tidal range or strong tidal currents. That predictability is the technology's main advantage: a tidal operator can commit to a generation schedule years in advance, which matters to a grid that must otherwise pay for storage to cover the variability of wind.\n\n## Turbine Siting\n\nTurbines are sited where peak current speed exceeds two metres per second, because power scales with the cube of velocity. Siting therefore concentrates on narrow channels between headlands. A site with half the current speed yields roughly one eighth of the power, so a marginal channel rarely justifies the fixed cost of the installation.\n\n## Environmental Impact\n\nThe main concern is not collision but the change in sediment transport, which can alter the seabed over years. Monitoring programmes usually compare the seabed before commissioning with a survey several years later. Blade strike on fish is studied too, but the evidence so far suggests that the far larger effect is the slow reshaping of the channel floor.",
+      "loader": {
+        "source": "# Tidal Energy Briefing\n\n## Overview\n\nTidal energy is predictable decades ahead, unlike wind or solar. The resource is concentrated at sites with a large tidal range or strong tidal currents. That predictability is the technology's main advantage: a tidal operator can commit to a generation schedule years in advance, which matters to a grid that must otherwise pay for storage to cover the variability of wind.\n\n## Turbine Siting\n\nTurbines are sited where peak current speed exceeds two metres per second, because power scales with the cube of velocity. Siting therefore concentrates on narrow channels between headlands. A site with half the current speed yields roughly one eighth of the power, so a marginal channel rarely justifies the fixed cost of the installation.\n\n## Environmental Impact\n\nThe main concern is not collision but the change in sediment transport, which can alter the seabed over years. Monitoring programmes usually compare the seabed before commissioning with a survey several years later. Blade strike on fish is studied too, but the evidence so far suggests that the far larger effect is the slow reshaping of the channel floor.\n",
+        "content": "# Tidal Energy Briefing\n\n## Overview\n\nTidal energy is predictable decades ahead, unlike wind or solar. The resource is concentrated at sites with a large tidal range or strong tidal currents. That predictability is the technology's main advantage: a tidal operator can commit to a generation schedule years in advance, which matters to a grid that must otherwise pay for storage to cover the variability of wind.\n\n## Turbine Siting\n\nTurbines are sited where peak current speed exceeds two metres per second, because power scales with the cube of velocity. Siting therefore concentrates on narrow channels between headlands. A site with half the current speed yields roughly one eighth of the power, so a marginal channel rarely justifies the fixed cost of the installation.\n\n## Environmental Impact\n\nThe main concern is not collision but the change in sediment transport, which can alter the seabed over years. Monitoring programmes usually compare the seabed before commissioning with a survey several years later. Blade strike on fish is studied too, but the evidence so far suggests that the far larger effect is the slow reshaping of the channel floor.",
+        "title": "Tidal Energy Briefing",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Tidal Energy Briefing",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 25,
+                "startOffset": 25,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Turbine Siting",
+                "startOffsetUtf16": 414,
+                "startOffset": 414,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Environmental Impact",
+                "startOffsetUtf16": 775,
+                "startOffset": 775,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -116638,6 +117418,42 @@
     {
       "name": "corpus/urban-canopy.md",
       "content": "# Urban Canopy Planning\n\n## Overview\n\nStreet trees are infrastructure, not decoration. Their canopy shades asphalt, intercepts rainfall and lowers the air temperature of the surrounding block. A street tree also has a maintenance cost and a service life, so the planning question is not whether to plant but where the same budget buys the most cooling.\n\n## Cooling Effect\n\nThe cooling benefit is largest where canopy covers the pavement rather than the building, because asphalt stores far more heat during the day. A continuous canopy is therefore more effective than the same number of isolated trees. Interception of rainfall follows the same geometry: a connected canopy slows runoff across a whole street rather than at scattered points.\n\n## Species Selection\n\nSpecies are chosen for drought tolerance and root behaviour rather than appearance. Trees with aggressive surface roots lift pavements and are poor choices for narrow verges. A species that needs summer irrigation also erodes the cooling benefit, because the water it consumes is itself a resource the city is trying to conserve.",
+      "loader": {
+        "source": "# Urban Canopy Planning\n\n## Overview\n\nStreet trees are infrastructure, not decoration. Their canopy shades asphalt, intercepts rainfall and lowers the air temperature of the surrounding block. A street tree also has a maintenance cost and a service life, so the planning question is not whether to plant but where the same budget buys the most cooling.\n\n## Cooling Effect\n\nThe cooling benefit is largest where canopy covers the pavement rather than the building, because asphalt stores far more heat during the day. A continuous canopy is therefore more effective than the same number of isolated trees. Interception of rainfall follows the same geometry: a connected canopy slows runoff across a whole street rather than at scattered points.\n\n## Species Selection\n\nSpecies are chosen for drought tolerance and root behaviour rather than appearance. Trees with aggressive surface roots lift pavements and are poor choices for narrow verges. A species that needs summer irrigation also erodes the cooling benefit, because the water it consumes is itself a resource the city is trying to conserve.\n",
+        "content": "# Urban Canopy Planning\n\n## Overview\n\nStreet trees are infrastructure, not decoration. Their canopy shades asphalt, intercepts rainfall and lowers the air temperature of the surrounding block. A street tree also has a maintenance cost and a service life, so the planning question is not whether to plant but where the same budget buys the most cooling.\n\n## Cooling Effect\n\nThe cooling benefit is largest where canopy covers the pavement rather than the building, because asphalt stores far more heat during the day. A continuous canopy is therefore more effective than the same number of isolated trees. Interception of rainfall follows the same geometry: a connected canopy slows runoff across a whole street rather than at scattered points.\n\n## Species Selection\n\nSpecies are chosen for drought tolerance and root behaviour rather than appearance. Trees with aggressive surface roots lift pavements and are poor choices for narrow verges. A species that needs summer irrigation also erodes the cooling benefit, because the water it consumes is itself a resource the city is trying to conserve.",
+        "title": "Urban Canopy Planning",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Urban Canopy Planning",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 25,
+                "startOffset": 25,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Cooling Effect",
+                "startOffsetUtf16": 354,
+                "startOffset": 354,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Species Selection",
+                "startOffsetUtf16": 744,
+                "startOffset": 744,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -120125,6 +120941,42 @@
     {
       "name": "corpus/vinegar-production.md",
       "content": "# Vinegar Production Notes\n\n## Overview\n\nVinegar production is a two-stage fermentation: yeast first converts sugar to ethanol, and acetic acid bacteria then oxidise the ethanol to acetic acid. The second stage is aerobic, which is what separates it from the anaerobic lactic fermentation used for preserving vegetables.\n\n## Acetic Acid Pathway\n\nAcetic acid bacteria sit at the surface of the liquid where oxygen is available, and they convert ethanol to acetic acid with acetaldehyde as an intermediate. The reaction releases heat and consumes oxygen, so a culture that is stirred too gently stalls for lack of oxygen rather than for lack of substrate.\n\n## Oxygen Requirement\n\nThe vessel is deliberately kept partly empty so that the surface film has air, and the liquid is never filled to the neck. Sealing a vinegar culture airtight stops the conversion entirely, unlike a lactic fermentation where the seal is required.",
+      "loader": {
+        "source": "# Vinegar Production Notes\n\n## Overview\n\nVinegar production is a two-stage fermentation: yeast first converts sugar to ethanol, and acetic acid bacteria then oxidise the ethanol to acetic acid. The second stage is aerobic, which is what separates it from the anaerobic lactic fermentation used for preserving vegetables.\n\n## Acetic Acid Pathway\n\nAcetic acid bacteria sit at the surface of the liquid where oxygen is available, and they convert ethanol to acetic acid with acetaldehyde as an intermediate. The reaction releases heat and consumes oxygen, so a culture that is stirred too gently stalls for lack of oxygen rather than for lack of substrate.\n\n## Oxygen Requirement\n\nThe vessel is deliberately kept partly empty so that the surface film has air, and the liquid is never filled to the neck. Sealing a vinegar culture airtight stops the conversion entirely, unlike a lactic fermentation where the seal is required.\n",
+        "content": "# Vinegar Production Notes\n\n## Overview\n\nVinegar production is a two-stage fermentation: yeast first converts sugar to ethanol, and acetic acid bacteria then oxidise the ethanol to acetic acid. The second stage is aerobic, which is what separates it from the anaerobic lactic fermentation used for preserving vegetables.\n\n## Acetic Acid Pathway\n\nAcetic acid bacteria sit at the surface of the liquid where oxygen is available, and they convert ethanol to acetic acid with acetaldehyde as an intermediate. The reaction releases heat and consumes oxygen, so a culture that is stirred too gently stalls for lack of oxygen rather than for lack of substrate.\n\n## Oxygen Requirement\n\nThe vessel is deliberately kept partly empty so that the surface film has air, and the liquid is never filled to the neck. Sealing a vinegar culture airtight stops the conversion entirely, unlike a lactic fermentation where the seal is required.",
+        "title": "Vinegar Production Notes",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Vinegar Production Notes",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 28,
+                "startOffset": 28,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Acetic Acid Pathway",
+                "startOffsetUtf16": 322,
+                "startOffset": 322,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Oxygen Requirement",
+                "startOffsetUtf16": 655,
+                "startOffset": 655,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -123152,6 +124004,42 @@
     {
       "name": "corpus/wave-energy.md",
       "content": "# Wave Energy Briefing\n\n## Overview\n\nWave energy is driven by wind rather than by the moon, so unlike tidal energy it is not predictable decades ahead. The resource is concentrated on exposed coastlines where the wave climate is energetic and consistent.\n\n## Device Siting\n\nDevices are sited where the average wave power exceeds a threshold that justifies the mooring cost, and where the seabed allows a fixed or moored installation. Siting therefore concentrates on exposed headlands rather than on sheltered channels.\n\n## Environmental Impact\n\nThe main concern is not collision but the change in sediment transport, which can alter the shoreline over years. Monitoring programmes usually compare the seabed before commissioning with a survey several years later. The effect on surfing breaks has also blocked several projects.",
+      "loader": {
+        "source": "# Wave Energy Briefing\n\n## Overview\n\nWave energy is driven by wind rather than by the moon, so unlike tidal energy it is not predictable decades ahead. The resource is concentrated on exposed coastlines where the wave climate is energetic and consistent.\n\n## Device Siting\n\nDevices are sited where the average wave power exceeds a threshold that justifies the mooring cost, and where the seabed allows a fixed or moored installation. Siting therefore concentrates on exposed headlands rather than on sheltered channels.\n\n## Environmental Impact\n\nThe main concern is not collision but the change in sediment transport, which can alter the shoreline over years. Monitoring programmes usually compare the seabed before commissioning with a survey several years later. The effect on surfing breaks has also blocked several projects.\n",
+        "content": "# Wave Energy Briefing\n\n## Overview\n\nWave energy is driven by wind rather than by the moon, so unlike tidal energy it is not predictable decades ahead. The resource is concentrated on exposed coastlines where the wave climate is energetic and consistent.\n\n## Device Siting\n\nDevices are sited where the average wave power exceeds a threshold that justifies the mooring cost, and where the seabed allows a fixed or moored installation. Siting therefore concentrates on exposed headlands rather than on sheltered channels.\n\n## Environmental Impact\n\nThe main concern is not collision but the change in sediment transport, which can alter the shoreline over years. Monitoring programmes usually compare the seabed before commissioning with a survey several years later. The effect on surfing breaks has also blocked several projects.",
+        "title": "Wave Energy Briefing",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Wave Energy Briefing",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 24,
+                "startOffset": 24,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Device Siting",
+                "startOffsetUtf16": 256,
+                "startOffset": 256,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Environmental Impact",
+                "startOffsetUtf16": 521,
+                "startOffset": 521,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",
@@ -125958,6 +126846,42 @@
     {
       "name": "corpus/wild-pollinators.md",
       "content": "# Wild Pollinator Notes\n\n## Overview\n\nWild pollinators include solitary bees, hoverflies and bumblebees, and they do not live in managed hives. Their contribution is easy to overlook because it is not rented, counted or moved between orchards.\n\n## Solitary Bees\n\nSolitary bees nest in bare ground or in hollow stems rather than in colonies. They forage at lower temperatures than honeybees and often fly in light rain, so they can pollinate a bloom week that is too cold for a hive.\n\n## Habitat\n\nHedgerows, unsprayed field margins and bare ground are the habitat that sustains them. Removing the margin to gain a few rows of crop usually costs more pollination than the extra rows return.",
+      "loader": {
+        "source": "# Wild Pollinator Notes\n\n## Overview\n\nWild pollinators include solitary bees, hoverflies and bumblebees, and they do not live in managed hives. Their contribution is easy to overlook because it is not rented, counted or moved between orchards.\n\n## Solitary Bees\n\nSolitary bees nest in bare ground or in hollow stems rather than in colonies. They forage at lower temperatures than honeybees and often fly in light rain, so they can pollinate a bloom week that is too cold for a hive.\n\n## Habitat\n\nHedgerows, unsprayed field margins and bare ground are the habitat that sustains them. Removing the margin to gain a few rows of crop usually costs more pollination than the extra rows return.\n",
+        "content": "# Wild Pollinator Notes\n\n## Overview\n\nWild pollinators include solitary bees, hoverflies and bumblebees, and they do not live in managed hives. Their contribution is easy to overlook because it is not rented, counted or moved between orchards.\n\n## Solitary Bees\n\nSolitary bees nest in bare ground or in hollow stems rather than in colonies. They forage at lower temperatures than honeybees and often fly in light rain, so they can pollinate a bloom week that is too cold for a hive.\n\n## Habitat\n\nHedgerows, unsprayed field margins and bare ground are the habitat that sustains them. Removing the margin to gain a few rows of crop usually costs more pollination than the extra rows return.",
+        "title": "Wild Pollinator Notes",
+        "sections": [
+          {
+            "level": 1,
+            "title": "Wild Pollinator Notes",
+            "startOffsetUtf16": 0,
+            "startOffset": 0,
+            "children": [
+              {
+                "level": 2,
+                "title": "Overview",
+                "startOffsetUtf16": 25,
+                "startOffset": 25,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Solitary Bees",
+                "startOffsetUtf16": 245,
+                "startOffset": 245,
+                "children": []
+              },
+              {
+                "level": 2,
+                "title": "Habitat",
+                "startOffsetUtf16": 484,
+                "startOffset": 484,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
       "blocks": [
         {
           "id": "blk_doc_parity_0",

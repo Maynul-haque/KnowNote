@@ -26,7 +26,7 @@
  *     scripts/gen-chunk-parity.mjs
  */
 
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -95,6 +95,19 @@ const SYNTHETIC = [
   }
 ]
 
+/** Serialise a section tree, recording the offsets in both units. */
+function serialiseSections(sections, content) {
+  return sections.map((section) => ({
+    level: section.level,
+    title: section.title,
+    // UTF-16 offsets, as the TypeScript loader produces them.
+    startOffsetUtf16: section.startOffset,
+    // Byte offsets, which is what the Rust port stores.
+    startOffset: byteOffsetOf(content, section.startOffset),
+    children: serialiseSections(section.children ?? [], content)
+  }))
+}
+
 /** Serialise the chunks of one run. */
 function serialiseChunks(content, chunks, blocksById) {
   return chunks.map((chunk) => ({
@@ -131,7 +144,9 @@ async function main() {
   const loader = new MarkdownLoader()
 
   for (const file of readdirSync(corpusDir).filter((name) => name.endsWith('.md')).sort()) {
-    const result = await loader.loadFromPath(join(corpusDir, file))
+    const path = join(corpusDir, file)
+    const raw = readFileSync(path, 'utf8')
+    const result = await loader.loadFromPath(path)
     const blocks = assignBlockIds(
       'doc_parity',
       buildDocumentBlocks({ content: result.content, structure: result.structure })
@@ -140,6 +155,14 @@ async function main() {
     cases.push({
       name: `corpus/${file}`,
       content: result.content,
+      // What the loader produced, so the Rust loader can be compared against
+      // this one rather than only against the chunker that consumes it.
+      loader: {
+        source: raw,
+        content: result.content,
+        title: result.title ?? null,
+        sections: serialiseSections(result.structure?.sections ?? [], result.content)
+      },
       blocks: blocks.map((block) => ({
         id: block.id,
         kind: block.kind,
