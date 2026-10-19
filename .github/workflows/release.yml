@@ -15,6 +15,12 @@ on:
 # the same workflow publishes to the fork in a fork and to upstream in upstream.
 # The electron-builder configuration keeps the upstream name as its default for
 # a local build with no override.
+#
+# They are read as `${{ env.PUBLISH_OWNER }}` and not as `$PUBLISH_OWNER`: the
+# Windows runner uses PowerShell, where a bare `$NAME` is a PowerShell variable
+# rather than an environment variable, and it is not set. The Linux runner uses
+# bash, where the bare form works - so the bare form fails on exactly one
+# platform, which is the hardest kind of failure to notice.
 env:
   PUBLISH_OWNER: ${{ github.repository_owner }}
   PUBLISH_REPO: ${{ github.event.repository.name }}
@@ -199,8 +205,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: >
           npx electron-builder --mac --arm64
-          --config.publish.owner="$PUBLISH_OWNER"
-          --config.publish.repo="$PUBLISH_REPO"
+          --config.publish.owner="${{ env.PUBLISH_OWNER }}"
+          --config.publish.repo="${{ env.PUBLISH_REPO }}"
           --publish always
 
       # Inspect the artifact we just shipped. This is the check that was missing
@@ -304,8 +310,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >
           npx electron-builder --win
-          --config.publish.owner="$PUBLISH_OWNER"
-          --config.publish.repo="$PUBLISH_REPO"
+          --config.publish.owner="${{ env.PUBLISH_OWNER }}"
+          --config.publish.repo="${{ env.PUBLISH_REPO }}"
           --publish always
 
   # Linux is built and published in its own job rather than as a third entry in
@@ -375,8 +381,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >
           npx electron-builder --linux AppImage deb
-          --config.publish.owner="$PUBLISH_OWNER"
-          --config.publish.repo="$PUBLISH_REPO"
+          --config.publish.owner="${{ env.PUBLISH_OWNER }}"
+          --config.publish.repo="${{ env.PUBLISH_REPO }}"
           --publish always
 
   # electron-builder uploads into the draft created by `create-draft` (see
