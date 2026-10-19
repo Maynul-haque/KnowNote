@@ -18,6 +18,33 @@ pub enum BlockKind {
 }
 
 impl BlockKind {
+    /// The name stored in the database.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BlockKind::Heading => "heading",
+            BlockKind::Paragraph => "paragraph",
+            BlockKind::ListItem => "list_item",
+            BlockKind::Table => "table",
+            BlockKind::Figure => "figure",
+            BlockKind::Caption => "caption",
+            BlockKind::Code => "code",
+        }
+    }
+
+    /// The name a block kind is stored under.
+    pub fn from_str(raw: &str) -> Option<Self> {
+        match raw {
+            "heading" => Some(BlockKind::Heading),
+            "paragraph" => Some(BlockKind::Paragraph),
+            "list_item" => Some(BlockKind::ListItem),
+            "table" => Some(BlockKind::Table),
+            "figure" => Some(BlockKind::Figure),
+            "caption" => Some(BlockKind::Caption),
+            "code" => Some(BlockKind::Code),
+            _ => None,
+        }
+    }
+
     /// Headings are atomic: a chunk never starts or ends inside one.
     pub fn is_heading(self) -> bool {
         matches!(self, BlockKind::Heading)

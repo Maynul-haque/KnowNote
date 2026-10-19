@@ -36,16 +36,34 @@ struct LocalEmbeddingInner {
     _environment: Environment,
     tokenizer: Tokenizer,
     space: EmbeddingSpace,
-    max_length: usize,
 }
 
 impl LocalEmbeddingBackend {
-    /// Load the pinned model from a cache directory.
+    /// Load the pinned model from a cache directory, using the ONNX Runtime
+    /// that is already loaded into the process.
     ///
     /// The files are the ones the manifest names, at the revision the manifest
     /// names. Nothing is fetched here: the downloader owns that, so a missing
     /// model is a missing model rather than a surprise network call.
     pub fn load(cache_dir: impl Into<PathBuf>) -> Result<Self> {
+        Self::load_with_runtime(cache_dir, None)
+    }
+
+    /// Load the pinned model, loading a specific ONNX Runtime.
+    ///
+    /// The runtime is loaded dynamically rather than linked, so the
+    /// application ships the runtime it chose rather than the one the build
+    /// machine happened to have. The CPU-only build of ONNX Runtime is a
+    /// fraction of the size of the DirectML one, and a 384-dimensional
+    /// embedding model does not need a GPU.
+    ///
+    /// This has to run before any other `ort` call in the process: the
+    /// dynamic loader registers the library once, and every later call uses
+    /// it.
+    pub fn load_with_runtime(
+        cache_dir: impl Into<PathBuf>,
+        runtime: Option<&std::path::Path>,
+    ) -> Result<Self> {
         let cache_dir = cache_dir.into();
         let root = cache_dir
             .join(LOCAL_EMBEDDING_MODEL.id)
@@ -64,9 +82,20 @@ impl LocalEmbeddingBackend {
             }
         }
 
-        let environment = ort::init()
-            .build()
-            .map_err(|error| EmbedError::Inference(error.to_string()))?;
+        let environment = match runtime {
+            Some(path) => ort::init_from(path)
+                .map_err(|error| {
+                    EmbedError::Inference(format!(
+                        "cannot load the ONNX Runtime from {}: {error}",
+                        path.display()
+                    ))
+                })?
+                .build()
+                .map_err(|error| EmbedError::Inference(error.to_string()))?,
+            None => ort::init()
+                .build()
+                .map_err(|error| EmbedError::Inference(error.to_string()))?,
+        };
 
         let mut builder = Session::builder(&environment)
             .map_err(|error| EmbedError::Inference(error.to_string()))?;
@@ -76,9 +105,40 @@ impl LocalEmbeddingBackend {
                 EmbedError::Inference(format!("cannot load {}: {error}", model_path.display()))
             })?;
 
-        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|error| {
+        let mut tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|error| {
             EmbedError::Inference(format!("cannot load {}: {error}", tokenizer_path.display()))
         })?;
+
+        // The batch is padded to its longest member and truncated to the
+        // model's limit. Both settings change the vectors, so they are set
+        // explicitly rather than left to the tokenizer's defaults.
+        //
+        // The pad token is the one the tokenizer's own vocabulary declares,
+        // not a guess: the wrong id pads with a real word, and the attention
+        // then reads it.
+        let pad_id = tokenizer
+            .get_vocab(true)
+            .get("<pad>")
+            .copied()
+            .unwrap_or(0);
+        let pad_token = "<pad>".to_string();
+
+        let _ = tokenizer.with_padding(Some(tokenizers::PaddingParams {
+            strategy: tokenizers::PaddingStrategy::BatchLongest,
+            direction: tokenizers::PaddingDirection::Right,
+            pad_to_multiple_of: None,
+            pad_id,
+            pad_type_id: 0,
+            pad_token,
+        }));
+        tokenizer
+            .with_truncation(Some(tokenizers::TruncationParams {
+                max_length: LOCAL_EMBEDDING_MODEL.max_length,
+                strategy: tokenizers::TruncationStrategy::LongestFirst,
+                direction: tokenizers::TruncationDirection::Right,
+                stride: 0,
+            }))
+            .map_err(|error| EmbedError::Inference(error.to_string()))?;
 
         Ok(Self {
             inner: Arc::new(LocalEmbeddingInner {
@@ -86,13 +146,19 @@ impl LocalEmbeddingBackend {
                 _environment: environment,
                 tokenizer,
                 space: local_embedding_space(),
-                max_length: LOCAL_EMBEDDING_MODEL.max_length,
             }),
         })
     }
 
     /// Embed a batch of texts. Blocking: this is the work the async wrapper
     /// hands to a blocking thread.
+    ///
+    /// The whole batch goes through the graph in one call, the way the
+    /// application embeds a document's chunks. That is not an optimisation:
+    /// a padded batch and an unpadded one give slightly different vectors,
+    /// because the attention is computed over the padded length. Embedding one
+    /// text at a time would therefore produce a *different index* from the
+    /// same document, and the retrieval would not match.
     fn embed_blocking(&self, texts: &[String], role: EmbeddingRole) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
@@ -109,54 +175,66 @@ impl LocalEmbeddingBackend {
             .encode_batch(prefixed, true)
             .map_err(|error| EmbedError::Inference(error.to_string()))?;
 
+        // Every row is the same length: the tokenizer padded the batch to its
+        // longest member.
+        let length = encodings.first().map(|encoding| encoding.len()).unwrap_or(0);
+        if length == 0 {
+            return Ok(vec![Vec::new(); encodings.len()]);
+        }
+
+        let batch = encodings.len();
+        let mut input_ids: Vec<i64> = Vec::with_capacity(batch * length);
+        let mut attention_mask: Vec<i64> = Vec::with_capacity(batch * length);
+        let mut token_type_ids: Vec<i64> = Vec::with_capacity(batch * length);
+
+        for encoding in &encodings {
+            if encoding.len() != length {
+                return Err(EmbedError::Inference(
+                    "the tokenizer produced rows of different lengths".to_string(),
+                ));
+            }
+            let ids = encoding.get_ids();
+            let mask = encoding.get_attention_mask();
+            for index in 0..length {
+                input_ids.push(ids[index] as i64);
+                attention_mask.push(mask[index] as i64);
+                token_type_ids.push(0);
+            }
+        }
+
+        let shape = [batch, length];
+
         let mut session = self
             .inner
             .session
             .lock()
             .map_err(|_| EmbedError::Inference("the inference session is poisoned".to_string()))?;
 
-        let mut vectors = Vec::with_capacity(encodings.len());
+        let outputs = session
+            .run(ort::inputs! {
+                "input_ids" => Tensor::from_array((shape, input_ids))
+                    .map_err(|error| EmbedError::Inference(error.to_string()))?,
+                "attention_mask" => Tensor::from_array((shape, attention_mask.clone()))
+                    .map_err(|error| EmbedError::Inference(error.to_string()))?,
+                "token_type_ids" => Tensor::from_array((shape, token_type_ids))
+                    .map_err(|error| EmbedError::Inference(error.to_string()))?,
+            })
+            .map_err(|error| EmbedError::Inference(error.to_string()))?;
 
-        for encoding in encodings {
-            let ids = encoding.get_ids();
-            let mask = encoding.get_attention_mask();
+        let (_, hidden) = outputs["last_hidden_state"]
+            .try_extract_tensor::<f32>()
+            .map_err(|error| EmbedError::Inference(error.to_string()))?;
 
-            // The tokenizer can return a pair for a single piece; that never
-            // happens for the encodings this model produces, but a mismatch
-            // here would silently shift the pooling, so it is checked.
-            if ids.len() != mask.len() {
-                return Err(EmbedError::Inference(
-                    "the tokenizer produced a mask of a different length than the ids".to_string(),
-                ));
-            }
-
-            let length = ids.len().min(self.inner.max_length);
-            let input_ids: Vec<i64> = ids[..length].iter().map(|id| *id as i64).collect();
-            let attention_mask: Vec<i64> = mask[..length].iter().map(|value| *value as i64).collect();
-            let token_type_ids: Vec<i64> = vec![0; length];
-
-            let shape = [1usize, length];
-
-            let outputs = session
-                .run(ort::inputs! {
-                    "input_ids" => Tensor::from_array((shape, input_ids))
-                        .map_err(|error| EmbedError::Inference(error.to_string()))?,
-                    "attention_mask" => Tensor::from_array((shape, attention_mask.clone()))
-                        .map_err(|error| EmbedError::Inference(error.to_string()))?,
-                    "token_type_ids" => Tensor::from_array((shape, token_type_ids))
-                        .map_err(|error| EmbedError::Inference(error.to_string()))?,
-                })
-                .map_err(|error| EmbedError::Inference(error.to_string()))?;
-
-            let (_, hidden) = outputs["last_hidden_state"]
-                .try_extract_tensor::<f32>()
-                .map_err(|error| EmbedError::Inference(error.to_string()))?;
-
+        let mut vectors = Vec::with_capacity(batch);
+        for row in 0..batch {
+            let mask = &attention_mask[row * length..(row + 1) * length];
+            let hidden_row = &hidden[row * length * LOCAL_EMBEDDING_MODEL.dimensions
+                ..(row + 1) * length * LOCAL_EMBEDDING_MODEL.dimensions];
             vectors.push(mean_pool(
-                hidden,
+                hidden_row,
                 length,
                 LOCAL_EMBEDDING_MODEL.dimensions,
-                &attention_mask,
+                mask,
             ));
         }
 

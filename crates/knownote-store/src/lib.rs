@@ -8,11 +8,13 @@
 //!
 //! See [`layout::StorageLayout`] for the tiers and [`schema`] for the SQL.
 
+pub mod ingest;
 pub mod layout;
 pub mod retrieval;
 pub mod schema;
 pub mod store;
 
+pub use ingest::{ensure_vector_table, persist_document, DocumentInput};
 pub use layout::{ContentMigration, StorageLayout};
 pub use store::Store;
 

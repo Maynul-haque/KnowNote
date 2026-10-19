@@ -14,8 +14,10 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use knownote_core::structure::{DocumentStructure, SectionInfo};
 use knownote_core::text::Utf16Index;
-use knownote_core::{BlockKind, ChunkBlock, ChunkOptions, ChunkingService};
+use knownote_core::types::BlockKind;
+use knownote_core::{build_document_blocks, ChunkBlock, ChunkOptions, ChunkingService};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -28,8 +30,41 @@ struct Case {
     name: String,
     content: String,
     #[serde(default)]
+    loader: Option<LoaderFixture>,
+    #[serde(default)]
     blocks: Vec<BlockFixture>,
     runs: Vec<Run>,
+}
+
+/// What the TypeScript loader produced.
+#[derive(Debug, Deserialize)]
+struct LoaderFixture {
+    /// The raw document. The loader test in `knownote-ingest` reads this; the
+    /// chunker and block tests do not need it.
+    #[allow(dead_code)]
+    source: String,
+    /// The canonical text. The loader test in `knownote-ingest` reads this.
+    #[allow(dead_code)]
+    content: String,
+    /// The document title. The loader test in `knownote-ingest` reads this.
+    #[allow(dead_code)]
+    title: Option<String>,
+    sections: Vec<SectionFixture>,
+}
+
+/// One section of the document structure.
+#[derive(Debug, Deserialize)]
+struct SectionFixture {
+    level: i64,
+    title: String,
+    /// The UTF-16 offset, for the loader test.
+    #[allow(dead_code)]
+    #[serde(rename = "startOffsetUtf16")]
+    start_offset_utf16: usize,
+    #[serde(rename = "startOffset")]
+    start_offset: usize,
+    #[serde(default)]
+    children: Vec<SectionFixture>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -326,6 +361,105 @@ fn the_rust_chunker_matches_the_typescript_chunker() {
         "[parity] compared {total_chunks} chunks across {total_runs} runs in {} cases",
         fixture.cases.len()
     );
+}
+
+/// The block builder has to produce the same blocks as the original, not just
+/// consume them.
+///
+/// The chunker test above feeds the *original's* blocks to the Rust chunker,
+/// so it proves the chunker is exact given the right blocks. It does not prove
+/// the Rust block builder produces those blocks — and the blocks are what a
+/// citation resolves to, so a difference there moves the ground truth and
+/// changes the retrieval.
+#[test]
+fn the_rust_block_builder_matches_the_typescript_one() {
+    let fixture = load_fixture();
+    let mut compared = 0usize;
+    let mut blocks_compared = 0usize;
+
+    for case in &fixture.cases {
+        let Some(loader) = &case.loader else {
+            continue;
+        };
+        compared += 1;
+
+        let structure = DocumentStructure::Sections {
+            sections: loader
+                .sections
+                .iter()
+                .map(to_section)
+                .collect(),
+        };
+
+        let drafts = build_document_blocks(&case.content, Some(&structure));
+
+        assert_eq!(
+            drafts.len(),
+            case.blocks.len(),
+            "{}: the block count differs",
+            case.name
+        );
+
+        for (index, (actual, expected)) in drafts.iter().zip(case.blocks.iter()).enumerate() {
+            assert_eq!(
+                actual.kind.as_str(),
+                expected.kind,
+                "{}: block {index} has a different kind",
+                case.name
+            );
+            assert_eq!(
+                actual.page, expected.page,
+                "{}: block {index} is on a different page",
+                case.name
+            );
+            assert_eq!(
+                actual.level, expected.level,
+                "{}: block {index} has a different level",
+                case.name
+            );
+            assert_eq!(
+                actual.text, expected.text,
+                "{}: block {index} has different text",
+                case.name
+            );
+            assert_eq!(
+                actual.start_offset, expected.start_offset,
+                "{}: block {index} starts elsewhere",
+                case.name
+            );
+            assert_eq!(
+                actual.end_offset, expected.end_offset,
+                "{}: block {index} ends elsewhere",
+                case.name
+            );
+            blocks_compared += 1;
+        }
+    }
+
+    assert!(
+        compared >= 20,
+        "only {compared} documents were compared"
+    );
+    assert!(
+        blocks_compared > 100,
+        "only {blocks_compared} blocks were compared"
+    );
+}
+
+/// Rebuild a section from the fixture.
+fn to_section(fixture: &SectionFixture) -> SectionInfo {
+    SectionInfo {
+        level: fixture.level,
+        title: fixture.title.clone(),
+        content: String::new(),
+        start_offset: fixture.start_offset,
+        end_offset: fixture.start_offset,
+        children: fixture
+            .children
+            .iter()
+            .map(to_section)
+            .collect(),
+    }
 }
 
 /// The fixture must cover the shapes that are easy to get wrong, or a green

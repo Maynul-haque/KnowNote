@@ -279,12 +279,29 @@ fn flatten_sections(sections: &[SectionInfo]) -> Vec<SectionInfo> {
 ///
 /// The offset points at the `#` markers in Markdown, so the title appears a
 /// little way in rather than at the offset itself.
+///
+/// The window is measured in **characters**, not bytes. A byte count would
+/// overshoot: a title of Chinese characters is three bytes each, so the
+/// window would run past the title and, worse, could end in the middle of a
+/// multi-byte character.
 fn heading_matches_content(content: &str, section: &SectionInfo) -> bool {
-    let window_end = std::cmp::min(
-        content.len(),
-        section.start_offset + section.level as usize + section.title.len() + 4,
-    );
-    slice(content, section.start_offset, window_end).contains(&section.title)
+    let start = section.start_offset.min(content.len());
+    let window_characters = section.level.max(0) as usize + section.title.chars().count() + 4;
+    let window_end = offset_after_characters(content, start, window_characters);
+
+    slice(content, start, window_end).contains(&section.title)
+}
+
+/// The byte offset `characters` characters after `start`.
+fn offset_after_characters(content: &str, start: usize, characters: usize) -> usize {
+    let mut offset = start;
+    for _ in 0..characters {
+        match content[offset..].chars().next() {
+            Some(c) => offset += c.len_utf8(),
+            None => break,
+        }
+    }
+    offset
 }
 
 /// The offset of the end of the line that starts at `from`.

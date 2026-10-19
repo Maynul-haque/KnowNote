@@ -11,7 +11,7 @@ authors.workspace = true
 knownote-core = { path = "../knownote-core" }
 knownote-embedding = { path = "../knownote-embedding" }
 async-trait = "0.1"
-ort = { version = "2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-rustls"] }
+ort = { version = "2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "load-dynamic", "tls-rustls"] }
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 sha2 = "0.10"
