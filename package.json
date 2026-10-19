@@ -17,6 +17,7 @@
     "node": ">=24 <25"
   },
   "scripts": {
+    "postinstall": "install-electron",
     "format": "prettier --write .",
     "lint": "eslint --cache .",
     "check:design": "node scripts/check-design-tokens.mjs",
@@ -41,6 +42,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
+    "chunk:parity": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./test/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/gen-chunk-parity.mjs",
     "eval:retrieval": "npm run build && node --experimental-transform-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/eval-retrieval.mjs",
     "eval:threshold": "npm run build && node scripts/eval-threshold.mjs",
     "eval:sweep": "npm run build && node scripts/eval-sweep.mjs",
@@ -106,6 +108,18 @@
     "   both are in asarUnpack so they are loadable from disk.",
     "",
     "Everything else lives in devDependencies and is bundled into out/main by rollup."
+  ],
+  "//postinstall": [
+    "Electron 44 dropped its `postinstall` script and exposes the download as an",
+    "`install-electron` binary instead, so `npm ci` no longer fetches the runtime",
+    "on its own. electron-builder needs `node_modules/electron/dist` to package an",
+    "app, and the packaged smoke test needs it to run the app, so without this the",
+    "Verify workflow fails at `build:unpack` on a clean checkout.",
+    "",
+    "This is not `electron-builder install-app-deps`: that one is deliberately not",
+    "run, because every native dependency here is N-API with shipped prebuilds and",
+    "rebuilding would only require a toolchain. See the `npmRebuild` note in",
+    "electron-builder.yml."
   ],
   "dependencies": {
     "@huggingface/transformers": "^4.3.0",
@@ -224,5 +238,14 @@
     "vite": "^7.3.1",
     "zod": "^4.3.6",
     "zustand": "^5.0.10"
+  },
+  "allowScripts": {
+    "esbuild@0.18.20": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "better-sqlite3@13.0.3": true,
+    "electron-winstaller@5.4.0": true,
+    "onnxruntime-node@1.30.0": true,
+    "protobufjs@7.6.6": true
   }
 }

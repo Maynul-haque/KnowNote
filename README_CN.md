@@ -70,7 +70,7 @@ Claude Code、Codex、Cursor、Claude Desktop —— 让它直接检索你已有
 写出来，是因为不说的话，你就只能在安装之后才发现。
 
 - 音频上传与转录、测验生成、幻灯片生成仍在开发中，不在任何已发布的版本里。
-- 没有 Linux 构建，macOS 构建也只有 Apple 芯片版本。
+- macOS 构建只有 Apple 芯片版本。
 - 安装包未签名、未公证 —— 见下面的安装步骤。
 - 没有账号、没有同步、没有协作，也没有遥测：KnowNote 是单用户桌面工具。
 
@@ -82,6 +82,7 @@ Claude Code、Codex、Cursor、Claude Desktop —— 让它直接检索你已有
 
 - **Windows**：`knownote-{version}-setup.exe`
 - **macOS（Apple 芯片）**：`knownote-{version}-arm64.dmg`
+- **Linux**：`knownote-{version}.AppImage` 或 `knownote_{version}_amd64.deb`
 
 > **安装包未签名。** 发布流程中没有 Apple Developer ID 证书，所以 macOS 首次打开会拒绝启动，Windows SmartScreen 也会拦截安装程序。这不代表下载损坏，两个提示都只需处理一次，按下面的步骤走即可。
 
@@ -103,6 +104,24 @@ Claude Code、Codex、Cursor、Claude Desktop —— 让它直接检索你已有
 #### Windows
 
 如果 SmartScreen 提示 _"Windows 已保护你的电脑"_，点 **更多信息** → **仍要运行**。
+
+#### Linux
+
+`.AppImage` 是自包含的，\u52A0\u4E0A\u6267\u884C\u6743\u9650后直接运行：
+
+```bash
+chmod +x knownote-{version}.AppImage
+./knownote-{version}.AppImage
+```
+
+`.deb` 适用于 Debian、Ubuntu 及其衍生版：
+
+```bash
+sudo apt install ./knownote_{version}_amd64.deb
+```
+
+AppImage 需要 FUSE 才能挂载自己。在精简的 Debian 或 Ubuntu 上需要先执行
+`sudo apt install libfuse2`。
 
 #### 首次启动
 

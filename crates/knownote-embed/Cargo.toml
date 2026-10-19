@@ -1,0 +1,29 @@
+[package]
+name = "knownote-embed"
+description = "Local and remote embedding backends for KnowNote, with the embedding model pinned by revision."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+knownote-core = { path = "../knownote-core" }
+knownote-embedding = { path = "../knownote-embedding" }
+async-trait = "0.1"
+ort = { version = "2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-rustls"] }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+sha2 = "0.10"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util", "time"] }
+tracing = { workspace = true }
+futures-util = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"

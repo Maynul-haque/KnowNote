@@ -1,0 +1,29 @@
+[package]
+name = "knownote-store"
+description = "Tiered storage for KnowNote: metadata and indexes on SSD, bulk content on a configurable drive."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+knownote-core = { path = "../knownote-core" }
+knownote-embedding = { path = "../knownote-embedding" }
+rusqlite = { version = "0.37", features = ["bundled", "backup", "functions"] }
+sqlite-vec = "0.1.9"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+async-trait = "0.1"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[lints.rust]
+# The sqlite-vec extension has to be registered through a C callback, which is
+# the one place this crate uses unsafe. It is confined to a single function
+# with a safety note.
+unsafe_code = "deny"

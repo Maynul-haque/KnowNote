@@ -18,8 +18,8 @@ web
 
 The shell is Electron, so the interface is drawn by a web engine and this is the
 only schema value that fits. `adaptive` is wrong: the design language does not
-switch per OS. Shipped artifacts are Windows and macOS (Apple Silicon) only, but
-that is a release-pipeline fact, not a platform fact — see
+switch per OS. Shipped artifacts are Windows, macOS (Apple Silicon) and Linux,
+but that is a release-pipeline fact, not a platform fact — see
 [Operating Context](#operating-context).
 
 ## Users
@@ -79,9 +79,9 @@ already parsed. Do not claim more than the shipped build does.
 - **Storage** is SQLite with `sqlite-vec` through Drizzle ORM; one vector table
   per notebook, each carrying its own width, so vectors from different embedding
   spaces are never compared (README; #47).
-- **Publication position:** unsigned and un-notarised builds, no Linux build,
-  macOS is Apple Silicon only. `[inferred]` This describes what the release
-  pipeline publishes today, not what the code can build.
+- **Publication position:** unsigned and un-notarised builds, macOS is Apple
+  Silicon only. `[inferred]` This describes what the release pipeline publishes
+  today, not what the code can build.
 - **Two locales** ship: English and Simplified Chinese, kept in sync
   (CONTRIBUTING.md).
 - **Work happens against a written interface system.** `DESIGN.md` is declared

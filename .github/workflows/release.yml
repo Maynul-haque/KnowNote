@@ -72,6 +72,12 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      # Report every platform's result instead of stopping at the first failure.
+      # macOS and Windows upload into the same draft release, so cancelling one
+      # because the other failed would leave the draft carrying only half the
+      # assets. The draft is promoted only when every job in this matrix
+      # succeeded, so this does not weaken the publish gate.
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
 
@@ -275,6 +281,69 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run build:win -- --publish always
 
+  # Linux is built and published in its own job rather than as a third entry in
+  # the matrix above, because the `publish` job promotes the draft only when
+  # every platform it depends on succeeded. A Linux-only failure - a missing
+  # distro package, a packaging tool that changed behaviour - must not hold the
+  # Windows and macOS users hostage while they wait on the release.
+  #
+  # The job still reports failure, so a broken Linux build is visible in this
+  # workflow run and named in the release notes; it just does not block
+  # publication. When it fails, no Linux artifact is uploaded at all:
+  # electron-builder uploads only after a successful build, so the published
+  # draft is never left half-populated with Linux files.
+  release-linux:
+    needs: create-draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # electron-builder's AppImage tooling needs libfuse2, and icon detection
+      # needs `file`. Both are present on the runner image, but neither is
+      # guaranteed to stay there, and a missing one fails late and obscurely.
+      - name: Install packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2 file
+
+      # The unpacked build is the same artifact the macOS and Windows jobs
+      # verify, and running the real executable is what catches a native addon
+      # or module-resolution problem that a successful package does not reveal.
+      # That is the reason `smoke:packaged` exists in this repo: three startup
+      # crashes here once packaged cleanly.
+      - name: Build and smoke test the unpacked app
+        run: |
+          npm run build:unpack
+          xvfb-run -a npm run smoke:packaged
+
+      # AppImage and deb only, and electron-builder is called directly rather
+      # than through `npm run build:linux`: the script already passes
+      # `--linux`, so appending a second `--linux` with its target list would
+      # duplicate the flag. The build output it needs was produced by the
+      # step above.
+      #
+      # The `linux.target` list in electron-builder.yml also contains snap, but
+      # building a snap needs snapcraft, which is slow and flaky on CI. Snap is
+      # a distribution channel rather than a download artifact, so the release
+      # ships the two formats users actually fetch; `npm run build:linux`
+      # still builds all three locally.
+      - name: Build & Release (Linux)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --linux AppImage deb --publish always
+
   # electron-builder uploads into the draft created by `create-draft` (see
   # publish.releaseType in electron-builder.yml, and the note on that job for
   # why the draft is created up front). It is promoted to public here, which
@@ -284,6 +353,35 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
+      # A Linux build that failed leaves the release without Linux artifacts.
+      # That is a supported state - the Linux job does not gate promotion - so
+      # it is reported as a warning rather than an error, and every missing
+      # format is named so the gap is never silent.
+      - name: Report missing platform artifacts
+        run: |
+          set -uo pipefail
+          ASSETS=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)
+          if [ -z "$ASSETS" ]; then
+            echo "::warning title=Could not list release assets::skipping the platform artifact check"
+          else
+            MISSING=0
+            for ext in exe dmg deb AppImage; do
+              found=0
+              while IFS= read -r name; do
+                case "$name" in
+                  *".$ext") found=1; break ;;
+                esac
+              done <<< "$ASSETS"
+              if [ "$found" = "0" ]; then
+                echo "::warning title=Missing release artifact::no asset ends with '.$ext' in release $GITHUB_REF_NAME"
+                MISSING=1
+              fi
+            done
+            if [ "$MISSING" = "1" ]; then
+              echo "::notice title=Incomplete release::one or more platforms did not publish an artifact; see the failing job in this run."
+            fi
+          fi
+
       - name: Promote draft release to public
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

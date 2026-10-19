@@ -80,10 +80,14 @@ linux:
     - AppImage
     - snap
     - deb
-  maintainer: electronjs.org
+  # `maintainer` becomes the .deb control field. `electronjs.org` was the
+  # electron-builder default and was never a truthful value for this project.
+  maintainer: KnowNote
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
+  # build/icon.png is 512x512, which is what the AppImage tooling wants; a
+  # smaller source is upscaled and looks soft in the desktop launcher.
 # Fail the build when the dependency collector cannot resolve a production
 # dependency, instead of only logging a warning (which is the v26 default).
 # A missed dependency is invisible at build time and only surfaces as

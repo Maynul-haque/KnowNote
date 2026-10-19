@@ -1,0 +1,17 @@
+[package]
+name = "knownote-embedding"
+description = "The embedding contract for KnowNote: what a backend has to provide, and the space a vector belongs to."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+async-trait = "0.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"

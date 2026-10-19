@@ -92,7 +92,7 @@ Written down because the alternative is that you find out after installing.
 
 - Audio upload and transcription, quiz generation and slide generation are in
   development. They are not in any release.
-- There is no Linux build, and the macOS build is Apple Silicon only.
+- The macOS build is Apple Silicon only.
 - Builds are unsigned and not notarised — see the install steps below.
 - No accounts, no sync, no collaboration and no telemetry: KnowNote is a
   single-user desktop tool.
@@ -106,6 +106,7 @@ Download the build for your platform from
 
 - **Windows**: `knownote-{version}-setup.exe`
 - **macOS (Apple Silicon)**: `knownote-{version}-arm64.dmg`
+- **Linux**: `knownote-{version}.AppImage` or `knownote_{version}_amd64.deb`
 
 > **The builds are unsigned.** There is no Apple Developer ID certificate in the
 > release pipeline, so macOS refuses to launch the app on first run and Windows
@@ -133,6 +134,24 @@ taken from this repository's Releases page.
 
 If SmartScreen shows _"Windows protected your PC"_, choose **More info** →
 **Run anyway**.
+
+#### Linux
+
+The `.AppImage` is self-contained — make it executable and run it:
+
+```bash
+chmod +x knownote-{version}.AppImage
+./knownote-{version}.AppImage
+```
+
+The `.deb` installs on Debian, Ubuntu and derivatives:
+
+```bash
+sudo apt install ./knownote_{version}_amd64.deb
+```
+
+The AppImage needs FUSE to mount itself. On a minimal Debian or Ubuntu install
+that means `sudo apt install libfuse2`.
 
 #### First run
 
