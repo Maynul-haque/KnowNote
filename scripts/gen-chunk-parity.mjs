@@ -239,7 +239,28 @@ async function main() {
   }
 
   mkdirSync(join(OUT, '..'), { recursive: true })
-  writeFileSync(OUT, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+  // One case per line.
+  //
+  // The file is several megabytes, and pretty-printing it put every number on
+  // its own line: 166,000 lines for 33 cases. Git stores that fine, but every
+  // regeneration produced a diff of the same size, which makes the branch
+  // unreviewable and the history noise.
+  //
+  // This is still one valid JSON document - whitespace between array elements
+  // is allowed - so nothing has to change on the reading side. A case that
+  // changed is now one changed line.
+  const body = [
+    '{',
+    `  "generatedBy": ${JSON.stringify(payload.generatedBy)},`,
+    `  "note": ${JSON.stringify(payload.note)},`,
+    '  "cases": [',
+    payload.cases.map((entry) => `    ${JSON.stringify(entry)}`).join(',\n'),
+    '  ]',
+    '}',
+    ''
+  ].join('\n')
+
+  writeFileSync(OUT, body, 'utf8')
 
   const chunkCount = cases.reduce(
     (total, entry) =>
