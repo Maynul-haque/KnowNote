@@ -73,6 +73,37 @@ jobs:
           done
           echo "npm runtime: $failures of 5 failed"
 
+      # The failing run used `--workspace -- --ignored`, not the single test.
+      # Same command, three times, with the machine's identity printed.
+      - name: Workspace ignored suite, three runs, official runtime
+        if: always()
+        env:
+          KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
+        run: |
+          set -uo pipefail
+          echo "--- machine"
+          nproc
+          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' | grep -E '^(avx|avx2|avx512f|avx512_vnni|amx)' | tr '\n' ' '
+          echo
+
+          curl -fsSL -o /tmp/pdfium.tgz \
+            https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz
+          mkdir -p /tmp/pdfium
+          tar -xzf /tmp/pdfium.tgz -C /tmp/pdfium
+          PDFIUM_LIB="$(find /tmp/pdfium -name 'libpdfium.so' -print -quit)"
+
+          ORT_LIB="$(find /tmp/onnxruntime-linux-x64-1.30.0 -name 'libonnxruntime.so' -print -quit)"
+          failures=0
+          for run in 1 2 3; do
+            echo "--- workspace run $run"
+            if ! KNOWNOTE_ONNXRUNTIME="$ORT_LIB" KNOWNOTE_PDFIUM="$(dirname "$PDFIUM_LIB")" \
+              cargo test --workspace --locked -- --ignored; then
+              failures=$((failures + 1))
+            fi
+          done
+          echo "workspace: $failures of 3 failed"
+
       - name: Baseline, five runs, official runtime
         if: always()
         env:
