@@ -1,9 +1,10 @@
 # AppImage PDF indexing fails with "Not Found" — findings
 
-Status: **investigation record**. This document records what was observed on a
-real Linux installation, the evidence that narrows the failure to one stage, and
-the changes that are proposed to fix it. It is **not** the contract; the
-normative design is [DESIGN.md](../DESIGN.md).
+Status: **investigation record — the fix has shipped**. Sections 1–8 record what was
+observed on a real Linux installation, the evidence that narrowed the failure to one
+stage, and the changes that were proposed. The fix and the gate that proves it are in
+[`9. The fix, as shipped`](#9-the-fix-as-shipped); §6.5 was deliberately deferred. This
+document is not the contract; the normative design is [DESIGN.md](../DESIGN.md).
 
 Reported symptom: the Linux AppImage imports a PDF, the document never becomes
 indexed, and the app shows the bare error **`Not Found`**.
@@ -330,3 +331,36 @@ differs between the CI-verified build and the downloaded AppImage is the
 embedding worker thread, whose entry point and ESM dependencies are loaded
 from **inside** `app.asar`. That path is never exercised by CI, and the
 failure is reported to the user as an untraceable nine-byte string.
+
+---
+
+## 9. The fix, as shipped
+
+Fix commit `7cc1308`, first released in **`v1.5.3-rust.2`** (run
+`39400325364`, 2026-10-20: guard → three platform builds → Linux build +
+AppImage smoke hard gate → publish; every job green).
+
+- **§6.2** — `LocalEmbeddingBackend.createExtractor()` sets
+  `env.localModelPath = cacheDir` next to `env.cacheDir`
+  (`test/localEmbeddingBackend.test.ts` asserts both).
+- **§6.3** — `electron-builder.yml` asarUnpacks `out/main/embeddingWorker.js`.
+- **§6.1** — implemented at the **backend layer instead of worker + service**:
+  the wrap lives where the failure originates (`describeModelLoadFailure()`),
+  so the in-process path is covered too, the worker and
+  `EmbeddingService.ts` stay untouched, and the message names the model, the
+  revision, the cache directory, whether the pinned weights are actually on
+  disk, the original error, and the re-download suggestion. A deliberate,
+  smaller deviation that satisfies the same contract with one wrap point.
+- **§6.4** — `smoke-packaged.mjs` gained an `--appimage` mode: `--appimage-extract`
+  (no FUSE) → extracted `AppRun` → the packaged smoke test with the pinned model
+  provisioned into a throwaway profile. The smoke test's new check loads the
+  model **in the worker thread** and asserts id, dimensions (384) and
+  finiteness; `verify.yml` has the `smoke-appimage` job as the no-release
+  iteration target, and `release.yml` runs the same script as a hard gate
+  after the AppImage upload. In the tag's own release run the check logged
+  `the local embedding model embeds inside the worker thread (384 dims)` —
+  `PASS - 32 checks passed` — which is the proof the AppImage never had.
+
+- **§6.5** — deferred to a follow-up release on purpose: reader-side confusion
+  is a UX refinement and this release needed the guarantee that indexing works
+  on what users download. Revisit with the reader work it belongs to.

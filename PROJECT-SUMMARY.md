@@ -3,7 +3,7 @@
 **What this is:** a handover document. It says what we are trying to do, what is already
 done and proven, what is not done, and how to pick it up cold.
 
-**Last updated:** 2026-10-19, at commit `f6d376f` on `feature/knownote-rust`.
+**Last updated:** 2026-10-20, at commit `910feaf` on `feature/knownote-rust`.
 
 ---
 
@@ -50,9 +50,9 @@ below is for, and it is the reason this rewrite is tractable at all.
 | Local clone | `F:\knownote` |
 | Upstream (read-only) | `origin` → `https://github.com/mrsibe/KnowNote.git` |
 | Our fork | `fork` → `https://github.com/Maynul-haque/KnowNote.git` |
-| Branch | `feature/knownote-rust` (5 commits ahead of `origin/main`) |
+| Branch | `feature/knownote-rust` (14 commits ahead of `origin/main`) |
 | Upstream `main` | `afbd1a5` — **untouched** |
-| Tag | `v1.5.3-rust.1` (triggers the release workflow) |
+| Tag | `v1.5.3-rust.2` (triggers the release workflow) |
 | Fork visibility | public, a registered fork of `mrsibe/KnowNote` |
 
 `git fetch upstream` does not exist here; use `git fetch origin` to pull upstream changes
@@ -61,6 +61,15 @@ and `git fetch fork` to sync with the fork.
 ### The commits
 
 ```
+910feaf  chore(release): 1.5.3-rust.2
+9e56f84  fix(ci): expand the model-cache path - Actions env values are literal
+2df4569  fix(ci): prime the model cache under xvfb - the eval entry still needs a display
+190a149  fix(ci): restore the newline between workflow_dispatch and its comment
+7cc1308  fix(embedding): the packaged worker resolves the real model cache
+0f9b0b1  docs: the reported AppImage embedding failure, and the project summary's Windows trap
+bf9edce  fix(release): read the publish target as an expression, not a shell variable
+171586d  docs: the project summary
+92ee816  fix(release): publish to the repository the workflow is running in
 f6d376f  chore(release): 1.5.3-rust.1
 5d81754  chore: write the parity fixture one case per line
 879964c  feat: the Rust retrieval reproduces the committed eval baseline exactly
@@ -218,6 +227,23 @@ a move of the bulk tier to another drive.
 - **The first run proved the app itself works on Linux**: the packaged app was built and
   the smoke test passed all its checks on `ubuntu-latest`. The only thing that failed was
   the upload, for the reason in §6.9.
+- **v1.5.3-rust.1 was then hit on a real install**: importing a PDF died at the embedding
+  stage with a bare `Not Found`. The investigation is
+  `docs/appimage-embedding-indexing-bug.md`; the fix is `7cc1308`.
+- **The fix**: the backend points transformers.js at the real model cache for *local*
+  lookups too (`env.localModelPath` — its default is a directory inside the package,
+  inside app.asar once packaged, and can never hold the weights), `out/main/embeddingWorker.js`
+  is asarUnpacked so the worker starts the same way in packed and unpacked builds, and
+  model-load failures now name the model, the cache directory, whether the weights are on
+  disk, and the original error.
+- **The proof, not the hope**: `verify.yml` gained a `smoke-appimage` job — extract the
+  AppImage with its own `--appimage-extract` (no FUSE), launch AppRun against a throwaway
+  profile with the pinned model provisioned, and run a real worker-thread embedding
+  (384 dims) inside the packaged artifact. `release.yml` runs the same as a **hard gate**
+  after the Linux upload. Both gates ran green in the tag's own pipeline, and
+  `v1.5.3-rust.2` (run `39400325364`: guard, three platform builds, Linux build + AppImage
+  gate, publish) is the release they approved — AppImage (467 MB), deb, setup.exe, dmg
+  and all three updater feeds are on the release page, draft-promoted.
 
 ### 4.7 Three pre-existing CI breakages were found and fixed
 
@@ -231,7 +257,7 @@ Ordered by how much it unblocks.
 
 | # | What | Notes |
 |---|---|---|
-| 1 | **The remaining loaders** — PDF, DOCX, PPTX, HTML | PDF is the app's most important input format. `pdfium-render` needs a C++ toolchain, which this machine now has. DOCX/PPTX are unzip + `quick-xml`; HTML is `scraper` + readability. |
+| 1 | **The remaining loaders** — PDF, DOCX, PPTX, HTML | PDF is the app's most important input format. `pdfium-render` with **prebuilt** PDFium (bblanchon/pdfium-binaries, Apache-2.0) — dynamic binding, no source compile. DOCX/PPTX are unzip + `quick-xml`; HTML is `scraper` + readability. |
 | 2 | **The LLM protocol adapters** | OpenAI Completions, OpenAI Responses, Anthropic Messages, Google Generative AI, and streaming. `rig` or raw `reqwest`. The chat turn lifecycle and the citation resolver come with it. |
 | 3 | **The Tauri shell** | `src-tauri/`, one Rust command per IPC channel, and a `window.api` shim that keeps the renderer's shape identical so the 13,672 lines of React keep working untouched. |
 | 4 | **The MCP server** | `rmcp` is a direct port: 5 read-only tools, same provenance shape. |
@@ -241,8 +267,9 @@ Ordered by how much it unblocks.
 
 ### The next task
 
-**The PDF loader.** It is the last big parser and the most important input format. It needs
-`pdfium-render`, which compiles PDFium from source — a long first build.
+**The PDF loader.** It is the last big parser and the most important input format. It uses
+`pdfium-render` against the **prebuilt** PDFium binary (bblanchon/pdfium-binaries,
+Apache-2.0), loaded dynamically — no source compile, no C++ toolchain step on the machine.
 
 Note the one thing the PDF loader must preserve: the page boundaries and the character
 offsets. A PDF's blocks carry a page number and a normalised bounding box, and that is what
@@ -313,6 +340,23 @@ The things that cost time. They are all still true, and each one will bite again
     been set"*. Use `${{ env.NAME }}` — the workflow substitutes it before any shell
     sees it, so the command reads the same on bash and on PowerShell. A form that works
     on exactly one platform is the hardest kind of failure to notice.
+
+11. **A worker thread resolves transformers.js' model paths into the package.**
+    transformers.js resolves a *local* model against `env.localModelPath`, whose default is a
+    `models/` directory inside its own package — inside app.asar once packaged, where the
+    user's weights can never be. The main process had the cache right; the worker did not;
+    every file read became a bare `Not Found`, and only in the shipped AppImage. Root cause,
+    mechanism and fix in `docs/appimage-embedding-indexing-bug.md`.
+
+12. **GitHub Actions `env:` values arrive literally.** `SMOKE_MODEL_CACHE: ~/…` came with
+    a real tilde — no shell ever expands it — so `existsSync('~/.config/…')` was always
+    false while the model sat downloaded at the expanded path. Cost one dispatch run; the
+    launcher now expands `~` against `os.homedir()` and logs the resolved path.
+
+13. **Every Electron spawn on a headless runner needs a display, even `--eval-prepare`.**
+    `scripts/eval.mjs --prepare` still runs the real main process; without `xvfb-run -a` it
+    dies in five seconds with *"Missing X server or $DISPLAY"*. It passed on every desktop
+    machine and failed only in CI, which is exactly the shape of failure worth logging.
 
 ### Releasing from the fork
 
@@ -385,7 +429,7 @@ The phases:
 
 | Phase | State |
 |---|---|
-| 0. Linux release build | **written; a tagged run was triggered** |
+| 0. Linux release build | **written and shipping**: `v1.5.3-rust.2` went through the guard, the three platform builds, the Linux build with the AppImage smoke hard gate, and publish — all green in its own tagged run |
 | 1. Rust core, loaders, embedding, retrieval, eval | **chunking, blocks, Markdown, embedding and retrieval done and proven**; the other loaders, the LLM adapters and the MCP server are not |
 | 2. Tauri shell | not started |
 | 3. Tiered storage | **the store, the split and the retrievers are done and tested**; the settings screen and the migration command are not |
