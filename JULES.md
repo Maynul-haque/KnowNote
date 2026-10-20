@@ -54,6 +54,15 @@ Without them, run `cargo test --workspace`. **CI is the authority** for those ga
 `verify.yml` provisions the model, and the packaged-app gate runs it inside the AppImage.
 Do not weaken or delete an ignored test to make a local run green.
 
+One thing to know before you treat a baseline mismatch as a regression: **embeddings
+depend on the CPU's instruction set, not only on the code.** On a runner with AVX-512 the
+reference TypeScript pipeline and the Rust port both produce `recallAt1 0.580189`; on one
+without it, both produce `0.59434`. CI therefore regenerates
+`docs/eval/baseline-v1.6.json` with the TypeScript pipeline on the runner *before* running
+the Rust test. If you compare across hardware locally, generate the reference the same way
+first. The PDF pin's boxes also vary by PDFium's platform font backend, so boxes compare at
+`1e-3`; text, blocks and byte offsets stay exact.
+
 ## Invariants — do not regress
 
 1. `chunk.content` and `block.text` are exactly `content[start..end]` of the canonical text.
