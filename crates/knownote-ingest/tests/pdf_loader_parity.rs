@@ -42,16 +42,21 @@ fn fixture_pdf(name: &str) -> PathBuf {
 /// Whether two normalised boxes describe the same geometry.
 ///
 /// The pin stores boxes as decimal text, and a decimal round-trip can move a
-/// double by one ulp in its last digit (the parser's, not the geometry's). A
-/// tolerance of 1e-12 in normalised space is far below anything a real
-/// extraction, pdfium update or layout change can produce, and far above a
-/// round-trip artifact, so this compares geometry and not the seventeenth
-/// digit of a decimal string. Text and offsets stay exact.
+/// double by one ulp in its last digit (the parser's, not the geometry's).
+///
+/// The tolerance is 1e-3 rather than 1e-12 because a box depends on glyph
+/// metrics, and PDFium computes those from the platform's font backend: the
+/// same pinned build gives a box width of 0.38631 on Windows and 0.38698 on
+/// Linux for the same page (CI run 39442531119). That is 0.17% of the page -
+/// three orders of magnitude below any layout change this pin is meant to
+/// catch, and it is not something the loader can control without shipping its
+/// own font stack. Everything the pipeline reads instead - the text, the block
+/// boundaries and the byte offsets - stays exact.
 fn box_matches(left: Option<&NormalizedBox>, right: Option<&NormalizedBox>) -> bool {
     match (left, right) {
         (None, None) => true,
         (Some(left), Some(right)) => {
-            const TOLERANCE: f64 = 1e-12;
+            const TOLERANCE: f64 = 1e-3;
             (left.x - right.x).abs() <= TOLERANCE
                 && (left.y - right.y).abs() <= TOLERANCE
                 && (left.w - right.w).abs() <= TOLERANCE

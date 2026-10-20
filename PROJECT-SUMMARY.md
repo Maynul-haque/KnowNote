@@ -184,7 +184,10 @@ corpus document.
 
 ### 4.4 The retrieval reproduces the committed eval baseline exactly
 
-`docs/eval/baseline-v1.6.json`, all nine metrics, to six decimals:
+On the machine that produced it. Embeddings also depend on the CPU's instruction
+set, so the CI gate generates its reference with the TypeScript pipeline on the
+runner it is about to test (trap 14). The committed baseline below is the
+Windows reference; all nine metrics, to six decimals:
 
 | Metric | Rust | Baseline |
 |---|---|---|
@@ -392,7 +395,18 @@ The things that cost time. They are all still true, and each one will bite again
     false while the model sat downloaded at the expanded path. Cost one dispatch run; the
     launcher now expands `~` against `os.homedir()` and logs the resolved path.
 
-13. **Every Electron spawn on a headless runner needs a display, even `--eval-prepare`.**
+13. **An embedding is a property of the machine, not only of the model.** ONNX Runtime
+    chooses CPU kernels from the host's ISA. Two `ubuntu-latest` runners in the same fleet,
+    the same weights and the same runtime build, gave `recallAt1` **0.59434** on one and
+    **0.580189** on a Xeon 8573C with AVX-512. Six-decimal parity across hardware is not
+    attainable with a shared runtime, and it is not the port's fault: the TypeScript app
+    drifts with the hardware too. The Rust gate therefore runs the TypeScript pipeline on
+    the runner first and requires the port to match *that*. What stays exact across
+    machines is the text. The PDF pin's boxes move by about `7e-4` between PDFium's
+    Windows and Linux font backends, so boxes compare at `1e-3`; text, blocks and byte
+    offsets stay exact.
+
+14. **Every Electron spawn on a headless runner needs a display, even `--eval-prepare`.**
     `scripts/eval.mjs --prepare` still runs the real main process; without `xvfb-run -a` it
     dies in five seconds with *"Missing X server or $DISPLAY"*. It passed on every desktop
     machine and failed only in CI, which is exactly the shape of failure worth logging.

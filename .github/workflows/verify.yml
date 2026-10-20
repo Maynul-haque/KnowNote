@@ -144,17 +144,56 @@ jobs:
   # claim: the retrieval baseline needs the pinned model and an ONNX Runtime, and
   # the PDF loader pin needs PDFium. Both are `#[ignore]`d rather than failed
   # when the artifacts are absent, so a green `rust` job alone proves neither.
-  # This job provisions the artifacts a developer holds locally and runs exactly
-  # those ignored tests. Model and cargo are cached; ONNX Runtime and PDFium are
-  # fetched each run (~50 MB) because they are pinned here, not in a lock file.
+  #
+  # This job does not compare the port against the committed baseline directly,
+  # because embeddings are a property of the machine as well as the code: ONNX
+  # Runtime picks CPU kernels from the host's ISA, and two runners in the same
+  # fleet gave recallAt1 0.59434 (no AVX-512) and 0.580189 (Xeon 8573C, with
+  # AVX-512) from the same weights and the same runtime build. So the real
+  # TypeScript pipeline runs first, rewriting docs/eval/baseline-v1.6.json with
+  # that machine's own reference, and the Rust port must then reproduce it
+  # exactly. That is the claim worth gating: the port is faithful on whatever
+  # hardware the gate lands on. The committed file remains the Windows reference.
+  #
+  # The model caches are keyed on the files that pin the revision and hashes, so
+  # a model upgrade misses both caches instead of silently reusing old weights.
+  # ONNX Runtime and PDFium are fetched each run (~50 MB) because they are
+  # pinned here, not in a lock file.
   rust-gates:
     name: rust-gates
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache the reference model
+        uses: actions/cache@v4
+        with:
+          path: ~/.config/knownote/models
+          key: knownote-eval-model-${{ hashFiles('src/main/embedding/localModel.ts') }}
+
+      - name: Build the app
+        run: npm run build
+
+      # The harness runs through the real Electron main process, so it needs a
+      # display even when only preparing the model. A cache hit makes --prepare
+      # a no-op; a cold run downloads the pinned weights once per pin.
+      - name: Produce the reference baseline on this runner
+        run: |
+          xvfb-run -a node scripts/eval.mjs --prepare
+          xvfb-run -a node scripts/eval.mjs
+          node -e "const b=require('./docs/eval/baseline-v1.6.json');console.log('reference recallAt1', b.metrics.recallAt1)"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -162,9 +201,6 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # Keyed on the file that names the model revision and the SHA256 of every
-      # weight file, so a model upgrade misses the cache instead of silently
-      # reusing the old weights.
       - name: Cache the pinned embedding model
         uses: actions/cache@v4
         with:
