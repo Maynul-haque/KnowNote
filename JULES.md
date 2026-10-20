@@ -74,7 +74,9 @@ Do not weaken or delete an ignored test to make a local run green.
   loaded output is what is wrong. Regenerate only with the documented script.
 - **Never commit** `target/`, `node_modules/`, `out/`, `dist/`, `build/`, or `*.AppImage`
   (they are ignored — keep it that way).
-- `unsafe_code` is forbidden workspace-wide. The PDFium high-level API is safe.
+- `unsafe_code` is forbidden workspace-wide, with one confined exception:
+  `knownote-store` sets it to `deny` for the sqlite-vec registration callback, which
+  carries a safety note. Do not add a second one. The PDFium high-level API is safe.
 - Embed a document's chunks in **one batch**. One-at-a-time embedding produces a different
   index (see the trap in `PROJECT-SUMMARY.md` §6, item 4).
 - **Do not tag a release.** `release.yml` publishes to this fork and will build and upload
