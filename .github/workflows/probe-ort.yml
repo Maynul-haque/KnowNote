@@ -5,6 +5,7 @@ name: Probe ORT build
 # Delete this file and branch once the question is answered.
 
 on:
+  pull_request:
   workflow_dispatch:
 
 permissions:
