@@ -374,9 +374,11 @@ jobs:
       # Provisions ~/.config/knownote/models on a cold cache (node_modules'
       # electron and the build produced by the step above are what it needs).
       # `--eval-prepare` only downloads the pinned model and never touches the
-      # database, so this cannot pollute the release in any way.
+      # database, so this cannot pollute the release in any way. The eval entry
+      # still runs the real Electron main process, so it gets a display even
+      # for that.
       - name: Prime the pinned embedding model cache
-        run: node scripts/eval.mjs --prepare
+        run: xvfb-run -a node scripts/eval.mjs --prepare
 
       # AppImage and deb only, and electron-builder is called directly rather
       # than through `npm run build:linux`: the script already passes

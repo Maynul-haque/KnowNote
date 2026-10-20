@@ -170,9 +170,10 @@ jobs:
         run: npm run build
 
       # Fills the cache above on a cold run. `--eval-prepare` only downloads the
-      # pinned model; it never opens the database.
+      # pinned model; it never opens the database. The eval entry still runs the
+      # real Electron main process, so it needs a display even for that.
       - name: Prime the pinned embedding model cache
-        run: node scripts/eval.mjs --prepare
+        run: xvfb-run -a node scripts/eval.mjs --prepare
 
       - name: Package the AppImage
         run: npx electron-builder --linux AppImage --publish never
