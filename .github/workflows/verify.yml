@@ -140,6 +140,76 @@ jobs:
       - name: Test the workspace
         run: cargo test --workspace --locked
 
+  # The always-on suite above skips the two gates that carry the "same product"
+  # claim: the retrieval baseline needs the pinned model and an ONNX Runtime, and
+  # the PDF loader pin needs PDFium. Both are `#[ignore]`d rather than failed
+  # when the artifacts are absent, so a green `rust` job alone proves neither.
+  # This job provisions the artifacts a developer holds locally and runs exactly
+  # those ignored tests. Model and cargo are cached; ONNX Runtime and PDFium are
+  # fetched each run (~50 MB) because they are pinned here, not in a lock file.
+  rust-gates:
+    name: rust-gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # Keyed on the file that names the model revision and the SHA256 of every
+      # weight file, so a model upgrade misses the cache instead of silently
+      # reusing the old weights.
+      - name: Cache the pinned embedding model
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.knownote-models
+          key: knownote-rust-model-${{ hashFiles('crates/knownote-embed/src/local_model.rs') }}
+
+      # The downloader verifies every file against the committed manifest, so a
+      # partial or corrupt cache fails here instead of inside the eval. The
+      # explicit file check is deliberate: the baseline test *skips* (and passes)
+      # when the model is absent, and a green skip is not a proof.
+      - name: Download the pinned embedding model
+        run: |
+          cargo run -p knownote-embed --example download_model -- .knownote-models
+          test -f .knownote-models/Xenova/multilingual-e5-small/761b726dd34fb83930e26aab4e9ac3899aa1fa78/onnx/model_quantized.onnx
+
+      # ONNX Runtime 1.30.0 is the version the Electron app ships. The PDFium
+      # build is pinned to `chromium/7881`, the FPDF surface pdfium-render's
+      # `pdfium_7881` feature was generated from - another build is not a safe
+      # substitution. Both libraries are located with `find` so the tarball
+      # layout is not assumed.
+      - name: Download ONNX Runtime and PDFium
+        run: |
+          set -euo pipefail
+
+          curl -fsSL -o /tmp/onnxruntime.tgz \
+            https://github.com/microsoft/onnxruntime/releases/download/v1.30.0/onnxruntime-linux-x64-1.30.0.tgz
+          tar -xzf /tmp/onnxruntime.tgz -C /tmp
+          ORT_LIB="$(find /tmp/onnxruntime-linux-x64-1.30.0 -name 'libonnxruntime.so' -print -quit)"
+          test -n "$ORT_LIB"
+          echo "KNOWNOTE_ONNXRUNTIME=$ORT_LIB" >> "$GITHUB_ENV"
+
+          curl -fsSL -o /tmp/pdfium.tgz \
+            https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz
+          mkdir -p /tmp/pdfium
+          tar -xzf /tmp/pdfium.tgz -C /tmp/pdfium
+          PDFIUM_LIB="$(find /tmp/pdfium -name 'libpdfium.so' -print -quit)"
+          test -n "$PDFIUM_LIB"
+          # The loader joins the platform library name to this directory.
+          echo "KNOWNOTE_PDFIUM=$(dirname "$PDFIUM_LIB")" >> "$GITHUB_ENV"
+
+      - name: Run the artifact-gated tests
+        env:
+          KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
+        run: cargo test --workspace --locked -- --ignored
+
   # The artifact users actually download on Linux is the AppImage, not the
   # unpacked build - and the one code path that differs between the two is the
   # embedding worker thread, whose entry inside app.asar once turned every model

@@ -3,7 +3,7 @@
 **What this is:** a handover document. It says what we are trying to do, what is already
 done and proven, what is not done, and how to pick it up cold.
 
-**Last updated:** 2026-10-20, at commit `910feaf` on `feature/knownote-rust`.
+**Last updated:** 2026-10-20, at the tip of `feature/knownote-rust` (`git log -1`).
 
 ---
 
@@ -120,7 +120,7 @@ Electron app currently ships.
 ### The verification gates
 
 ```bash
-# the Rust test suite (21 tests, no model needed)
+# the Rust test suite (33 tests, no model needed)
 cargo.cmd test --workspace
 
 # the parity fixture, regenerated from the TypeScript implementation
@@ -144,7 +144,13 @@ npm test && npm run typecheck && npm run check:design
 
 ## 4. What is done, and how it was proven
 
-**7,234 lines of Rust across 6 crates, 35 files. 21 tests passing, zero warnings.**
+**8,568 lines of Rust across 6 crates, 39 files. 33 always-on tests passing, 2
+artifact-gated tests, zero warnings. CI runs both sets on every push.**
+
+`verify.yml` has two Rust jobs: `rust` (the always-on suite, no artifacts) and
+`rust-gates` (the pinned model, ONNX Runtime and PDFium 7881 provisioned, then
+`cargo test -- --ignored`). The baseline and PDF pin are therefore gates, not
+claims: a regression fails the pull request.
 
 | Crate | Lines | What it holds |
 |---|---|---|
@@ -305,8 +311,10 @@ decision are left. The pieces:
 
 1. `cargo test --workspace` and `npm test` green (checked on the
    implementation machine; replay on your machine should match).
-2. Push, then dispatch `verify.yml` (workflow id `390334937`) to prove it on
-   CI. No release yet — the tagging cadence is a separate decision.
+2. Push, then dispatch `verify.yml` (workflow id `390334937`). Both Rust jobs
+   must be green: `rust` for the always-on suite and `rust-gates` for the
+   model-gated baseline and the PDFium pin. No release yet — the tagging
+   cadence is a separate decision.
 
 ---
 

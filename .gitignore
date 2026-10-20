@@ -17,6 +17,10 @@ target
 coverage/
 .nyc_output/
 
+# The pinned embedding model, as fetched by
+# `cargo run -p knownote-embed --example download_model`
+.knownote-models
+
 # IDE
 .idea/
 .vscode/settings.json
