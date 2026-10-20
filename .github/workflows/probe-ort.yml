@@ -46,28 +46,48 @@ jobs:
           tar -xzf /tmp/ort-node.tgz -C /tmp/ort-node
           find /tmp/ort-node -name 'libonnxruntime.so*' -print
 
-      - name: Baseline with the npm-shipped runtime
-        env:
-          KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
-        run: |
-          set -euo pipefail
-          ORT_LIB="$(find /tmp/ort-node -path '*linux/x64/libonnxruntime.so*' -print -quit)"
-          test -n "$ORT_LIB"
-          echo "using $ORT_LIB"
-          KNOWNOTE_ONNXRUNTIME="$ORT_LIB" \
-            cargo test -p knownote-eval --test baseline --locked -- --ignored --nocapture
-
-      - name: Baseline with the official runtime, for the record
-        if: always()
-        env:
-          KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
+      - name: Fetch the official runtime
         run: |
           set -euo pipefail
           curl -fsSL -o /tmp/ort.tgz \
             https://github.com/microsoft/onnxruntime/releases/download/v1.30.0/onnxruntime-linux-x64-1.30.0.tgz
           tar -xzf /tmp/ort.tgz -C /tmp
+
+      # Five consecutive runs. If exact parity is real, all five pass; a mix
+      # means the baseline is not reproducible run-to-run in this process.
+      - name: Baseline, five runs, npm-shipped runtime
+        env:
+          KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
+        run: |
+          set -uo pipefail
+          ORT_LIB="$(find /tmp/ort-node -path '*linux/x64/libonnxruntime.so*' -print -quit)"
+          test -n "$ORT_LIB"
+          echo "using $ORT_LIB"
+          failures=0
+          for run in 1 2 3 4 5; do
+            echo "--- npm runtime, run $run"
+            if ! KNOWNOTE_ONNXRUNTIME="$ORT_LIB" \
+              cargo test -p knownote-eval --test baseline --locked -- --ignored --nocapture; then
+              failures=$((failures + 1))
+            fi
+          done
+          echo "npm runtime: $failures of 5 failed"
+
+      - name: Baseline, five runs, official runtime
+        if: always()
+        env:
+          KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
+        run: |
+          set -uo pipefail
           ORT_LIB="$(find /tmp/onnxruntime-linux-x64-1.30.0 -name 'libonnxruntime.so' -print -quit)"
           test -n "$ORT_LIB"
           echo "using $ORT_LIB"
-          KNOWNOTE_ONNXRUNTIME="$ORT_LIB" \
-            cargo test -p knownote-eval --test baseline --locked -- --ignored --nocapture
+          failures=0
+          for run in 1 2 3 4 5; do
+            echo "--- official runtime, run $run"
+            if ! KNOWNOTE_ONNXRUNTIME="$ORT_LIB" \
+              cargo test -p knownote-eval --test baseline --locked -- --ignored --nocapture; then
+              failures=$((failures + 1))
+            fi
+          done
+          echo "official runtime: $failures of 5 failed"
