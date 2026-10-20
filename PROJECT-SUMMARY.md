@@ -306,6 +306,14 @@ The things that cost time. They are all still true, and each one will bite again
    (`--config.publish.owner=…`); they merge over `electron-builder.yml` rather than
    replacing it. That is what makes the override possible without a second config file.
 
+10. **A bare `$NAME` in a `run:` block is not an environment variable on Windows.**
+    The Windows runner uses PowerShell, where `$NAME` is a PowerShell variable; the
+    environment is `$env:NAME`. The Linux job published to the fork and the Windows job
+    failed with *"the variable '$PUBLISH_OWNER' cannot be retrieved because it has not
+    been set"*. Use `${{ env.NAME }}` — the workflow substitutes it before any shell
+    sees it, so the command reads the same on bash and on PowerShell. A form that works
+    on exactly one platform is the hardest kind of failure to notice.
+
 ### Releasing from the fork
 
 ```bash

@@ -33,6 +33,11 @@ desktop.ini
 *.log*
 .eslintcache
 
+# Downloaded release artifacts inspected locally (the v1.5.3-rust.1 AppImage was
+# pulled to reproduce the embedding-worker report against its real contents).
+# A 490 MB binary belongs to the release, not to the repository.
+*.AppImage
+
 # Temporary files
 *.tmp
 *.temp
