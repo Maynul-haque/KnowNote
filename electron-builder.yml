@@ -32,6 +32,15 @@ asarUnpack:
   - resources/**
   - '**/*.node'
   - '**/*.dylib'
+  # The embedding worker's entry runs in `worker_threads`, and `WorkerEmbeddingBackend`
+  # resolves it as `join(__dirname, 'embeddingWorker.js')`. Inside app.asar that __dirname
+  # is an in-archive path: the unpacked build and the AppImage then start the worker from
+  # different kinds of path, and Electron patches asar fs reads in the main thread only,
+  # so a worker thread resolving its ESM dependencies relative to an in-archive entry can
+  # miss the transformer's model cache (the AppImage "Not Found" indexing failure,
+  # docs/appimage-embedding-indexing-bug.md §5.2). Keep the worker entry on real disk so
+  # every build resolves it the same way.
+  - out/main/embeddingWorker.js
   - node_modules/better-sqlite3/**
   - node_modules/sqlite-vec/**
   - node_modules/sqlite-vec-*/**

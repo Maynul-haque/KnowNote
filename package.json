@@ -32,6 +32,7 @@
     "build": "npm run typecheck && electron-vite build",
     "build:unpack": "npm run build && electron-builder --dir",
     "smoke:packaged": "node scripts/smoke-packaged.mjs",
+    "smoke:appimage": "node scripts/smoke-packaged.mjs --appimage",
     "eval:prepare": "npm run build && node scripts/eval.mjs --prepare",
     "eval": "npm run build && node scripts/eval.mjs",
     "eval:chunking": "npm run build && node scripts/eval-chunking.mjs",

@@ -144,6 +144,26 @@ test('newestVersionTag ignores tags that are not versions', () => {
   assert.equal(newestVersionTag(['archive/ai-conversation', 'v1.2.0']), 'v1.2.0')
 })
 
+test('newestVersionTag restricts the pre-release line a package version may not fall behind', () => {
+  // The fork contract (PROJECT-SUMMARY.md §6.7): the fork releases on
+  // `1.5.3-rust.N`, which deliberately sorts below upstream's `v1.5.3` so the two
+  // version lines can never collide. Comparing that package version against the
+  // upstream tag reads as "fallen behind" and would red every pull request - so
+  // when a package version carries a pre-release, only tags sharing its first
+  // pre-release identifier count as what it must not fall behind.
+  const tags = ['v1.5.2', 'v1.5.3', 'v1.5.3-rust.1', 'v1.5.3-rust.2']
+
+  assert.equal(newestVersionTag(tags, 'rust'), 'v1.5.3-rust.2')
+  // A different line - `beta` - does not see the rust tags at all.
+  assert.equal(newestVersionTag(tags, 'beta'), null)
+  // Release versions (upstream) keep the unfiltered search.
+  assert.equal(newestVersionTag(tags), 'v1.5.3')
+  // The release's own pre-releases are never candidates for the release search,
+  // and a line filter ignores release tags.
+  assert.equal(newestVersionTag(['v1.0.5', 'v1.0.5-beta.1'], 'beta'), 'v1.0.5-beta.1')
+  assert.equal(newestVersionTag(tags, 'beta'), null)
+})
+
 /**
  * `release.yml` triggers on `tags: v*.*.*`, so a bare `1.2.3` is a tag no release
  * is ever built from. Counting it as the newest release would fail every pull

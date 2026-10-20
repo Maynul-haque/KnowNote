@@ -9,6 +9,8 @@
  */
 
 import type { EmbeddingPurpose, EmbeddingSpace } from '../../shared/types'
+import { existsSync } from 'fs'
+import { join } from 'path'
 import { LOCAL_EMBEDDING_MODEL } from './localModel'
 import { getLocalSpace } from './space'
 import type { BackendEmbeddingResult, EmbeddingBackend } from './types'
@@ -42,6 +44,7 @@ export type TransformersModuleLoader = () => Promise<{
   ) => Promise<FeatureExtractionPipeline>
   env: {
     cacheDir: string | null
+    localModelPath: string | null
     allowRemoteModels: boolean
     allowLocalModels: boolean
     useFSCache: boolean
@@ -162,23 +165,66 @@ export class LocalEmbeddingBackend implements EmbeddingBackend {
   }
 
   private async createExtractor(): Promise<FeatureExtractionPipeline> {
-    const { pipeline, env } = await this.loadTransformers()
+    try {
+      const { pipeline, env } = await this.loadTransformers()
 
-    // 权重由自研下载器预置到缓存目录；关掉远端模型，避免 transformers.js 自己触网
-    // （它的下载器不校验、不续传、不重试）。
-    env.cacheDir = this.cacheDir
-    env.allowRemoteModels = false
-    env.allowLocalModels = true
-    env.useFSCache = true
+      // 权重由自研下载器预置到缓存目录；关掉远端模型，避免 transformers.js 自己触网
+      // （它的下载器不校验、不续传、不重试）。
+      env.cacheDir = this.cacheDir
+      env.allowRemoteModels = false
+      env.allowLocalModels = true
+      env.useFSCache = true
+      // transformers.js resolves a *local* model lookup as
+      // `pathJoin(env.localModelPath, requestURL)`, and its default for that is a
+      // `models/` directory inside its own package — inside app.asar in the
+      // packaged app, so it can never contain the user's weights. Pointing it at
+      // the cache dir (`<userData>/models`) makes the lookup identical to the
+      // FileCache path the cache actually fills. This was the root cause of the
+      // packaged-AppImage "Not Found" failure at the embedding stage
+      // (docs/appimage-embedding-indexing-bug.md §5.3).
+      env.localModelPath = this.cacheDir
 
-    return pipeline('feature-extraction', LOCAL_EMBEDDING_MODEL.id, {
-      dtype: LOCAL_EMBEDDING_MODEL.dtype,
-      revision: LOCAL_EMBEDDING_MODEL.revision,
-      progress_callback: (event: { status?: string; progress?: number }) => {
-        if (event?.status === 'progress' && typeof event.progress === 'number') {
-          this.onLoadProgress?.(event.progress / 100)
+      return await pipeline('feature-extraction', LOCAL_EMBEDDING_MODEL.id, {
+        dtype: LOCAL_EMBEDDING_MODEL.dtype,
+        revision: LOCAL_EMBEDDING_MODEL.revision,
+        progress_callback: (event: { status?: string; progress?: number }) => {
+          if (event?.status === 'progress' && typeof event.progress === 'number') {
+            this.onLoadProgress?.(event.progress / 100)
+          }
         }
-      }
-    })
+      })
+    } catch (error) {
+      throw new Error(describeModelLoadFailure(this.cacheDir, error))
+    }
   }
+}
+
+/**
+ * 把「模型没法加载」重写成给诊断理由的话。
+ *
+ * transformers.js 把读不到的模型文件只报告 statusText = `Not Found`（9 个字节），
+ * embeddingWorker 只转发 error.message，于是这个字符串原样进了 documents.error_message ——
+ * 没有模型名、没有缓存目录、没有缺失路径，报告者就是第 1 个触碰的人。
+ *
+ * 这里补上：pin 死的模型与 revision、缓存目录、主权重文件是否真的在盘上，以及
+ * 原始错误。目录里有文件但读不到与目录里根本没有文件是两种不同的故障，消息里要分得开。
+ */
+export function describeModelLoadFailure(cacheDir: string, error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+  const primaryPath = join(
+    cacheDir,
+    LOCAL_EMBEDDING_MODEL.id,
+    LOCAL_EMBEDDING_MODEL.revision,
+    'onnx',
+    'model_quantized.onnx'
+  )
+  const presence = existsSync(primaryPath)
+    ? `the pinned weights ${primaryPath} are present on disk, so the cache itself exists but the model could not be read from it`
+    : `the pinned weights ${primaryPath} are missing from disk, so the cache is incomplete`
+  return (
+    `failed to load the local embedding model ${LOCAL_EMBEDDING_MODEL.id} ` +
+    `(${LOCAL_EMBEDDING_MODEL.revision}) from the model cache at ${cacheDir}: ${detail}. ` +
+    `${presence}. If the cache is incomplete or the error persists, re-download ` +
+    `the embedding model from Settings.`
+  )
 }

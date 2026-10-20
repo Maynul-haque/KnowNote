@@ -18,9 +18,7 @@ name: Verify
 
 on:
   pull_request:
-  workflow_dispatch:
-
-# Verification only needs to read the repository.
+  workflow_dispatch:# Verification only needs to read the repository.
 permissions:
   contents: read
 
@@ -113,3 +111,73 @@ jobs:
           cp docs/eval/baseline-v1.6.json /tmp/eval-a.json
           xvfb-run -a node scripts/eval.mjs
           diff /tmp/eval-a.json docs/eval/baseline-v1.6.json
+
+  # The artifact users actually download on Linux is the AppImage, not the
+  # unpacked build - and the one code path that differs between the two is the
+  # embedding worker thread, whose entry inside app.asar once turned every model
+  # lookup into `Not Found` while the unpacked smoke test stayed green
+  # (docs/appimage-embedding-indexing-bug.md). This job runs the smoke test
+  # against the AppImage itself - --appimage-extract + AppRun, so no FUSE - with
+  # the pinned model provisioned into a throwaway profile, so the worker-thread
+  # embedding check runs against the packaged artifact for real.
+  #
+  # It is also the dispatch target for iterating on packaging changes without
+  # touching a release: `gh workflow run verify.yml --ref <branch>`.
+  smoke-appimage:
+    name: smoke-appimage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Version consistency
+        run: npm run check:version
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same cache as the `verify` job fills on its Linux leg: a hit makes the
+      # prime step a no-op, so the 134 MB download happens once per pin.
+      - name: Cache eval embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.config/knownote/models
+          key: knownote-eval-model-${{ hashFiles('src/main/embedding/localModel.ts') }}
+
+      # electron-builder's AppImage tooling needs libfuse2, and icon detection
+      # needs `file`. Both are present on the runner image, but neither is
+      # guaranteed to stay there, and a missing one fails late and obscurely.
+      - name: Install packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2 file
+
+      # Covers typecheck + electron-vite; the unit tests are deliberately left
+      # to the `verify` job to keep this packaging gate from growing.
+      - name: Build
+        run: npm run build
+
+      # Fills the cache above on a cold run. `--eval-prepare` only downloads the
+      # pinned model; it never opens the database.
+      - name: Prime the pinned embedding model cache
+        run: node scripts/eval.mjs --prepare
+
+      - name: Package the AppImage
+        run: npx electron-builder --linux AppImage --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Smoke test the AppImage artifact
+        run: xvfb-run -a npm run smoke:appimage
+        env:
+          SMOKE_MODEL_CACHE: ~/.config/knownote/models

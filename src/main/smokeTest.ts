@@ -68,6 +68,16 @@ export const SMOKE_TEST_FLAG = '--smoke-test'
 /** Directory holding the test/fixtures documents, passed by the launcher. */
 const SMOKE_FIXTURES_PREFIX = '--smoke-fixtures='
 
+/**
+ * Directory holding the pinned local embedding model, passed by the launcher.
+ *
+ * Without it the worker-model check below is *skipped*: a local developer run
+ * doesn't have to own a ~140 MB model cache. `smoke:appimage` mode in the
+ * launcher refuses to run without it, so a gate that claims to prove the
+ * embedding worker cannot be launched without actually exercising it.
+ */
+const SMOKE_MODEL_CACHE_PREFIX = '--smoke-model-cache='
+
 /** Text every test/fixtures document contains; see test/fixtures/. */
 const IMPORT_MARKER = 'KnowNote Import Test'
 
@@ -83,6 +93,12 @@ function readFixtureDir(argv: readonly string[]): string {
     )
   }
   return arg.slice(SMOKE_FIXTURES_PREFIX.length)
+}
+
+/** The model cache the launcher provisioned, or null when the run opted out. */
+function readSmokeModelCache(argv: readonly string[]): string | null {
+  const arg = argv.find((value) => value.startsWith(SMOKE_MODEL_CACHE_PREFIX))
+  return arg ? arg.slice(SMOKE_MODEL_CACHE_PREFIX.length) : null
 }
 
 function excerpt(text: string, max = 80): string {
@@ -118,6 +134,16 @@ function assertThrows(run: () => unknown, message: string): void {
  * after this one. The process exits through `app.exit()` anyway.
  */
 const smokeWindows: BrowserWindow[] = []
+
+/**
+ * The KnowledgeService the checks build with the fake embedding backend. It outlives
+ * `runChecks()` - and so does the live folder watcher its watched-folder checks armed.
+ * A debounced reconcile that lands after `closeDatabase()` becomes an unhandled
+ * rejection and turns this PASS into exit code 1 (a replayed directory event inside
+ * the stdout-drain window survives almost every time on Windows), so stopping those
+ * watchers precedes the database close in every path of runSmokeTest.
+ */
+let smokeKnowledge: KnowledgeService | null = null
 
 /**
  * Fetch a custom-scheme URL from a real renderer.
@@ -322,6 +348,7 @@ async function runChecks(): Promise<string[]> {
   // `knownote-doc://` serves bytes *through* that path, and that it 404s when the query
   // answers null (#60).
   const knowledge = new KnowledgeService(fakeEmbeddingService())
+  smokeKnowledge = knowledge
   registerDocumentProtocolHandler((documentId) => knowledge.getDocumentLocalFilePath(documentId))
   const served = await net.fetch(documentUrl(protocolDocumentId))
   assert(served.ok, `an owned document did not serve (status ${served.status})`)
@@ -501,6 +528,65 @@ async function runChecks(): Promise<string[]> {
   )
   await import('onnxruntime-node')
   pass('@huggingface/transformers and onnxruntime-node load')
+
+  // --- the embedding worker thread runs real local inference -----------------
+  // Everything above proves the main process can load the modules. It never
+  // proves the one path the package can get wrong: the worker THREAD, whose
+  // entry (and the transformers.js instance it resolves) sits at a different
+  // path inside an asar than in the unpacked build, and which turned "the model
+  // is installed" into a bare `Not Found` at the embedding stage of real
+  // documents (docs/appimage-embedding-indexing-bug.md §5).
+  //
+  // The launcher provisions the pinned model into a throwaway profile and hands
+  // the directory over with --smoke-model-cache. Without the flag the check is
+  // skipped - so plain local runs stay model-free - and `smoke:appimage` mode
+  // refuses to launch without it, so what gates CI can never claim to have run
+  // while it actually skipped.
+  const modelCacheDir = readSmokeModelCache(process.argv)
+  if (!modelCacheDir) {
+    console.log(
+      '[SmokeTest] skip local embedding inference in the worker thread (no --smoke-model-cache)'
+    )
+  } else {
+    const { WorkerEmbeddingBackend } = await import('./embedding/WorkerEmbeddingBackend')
+    const { LOCAL_EMBEDDING_MODEL } = await import('./embedding/localModel')
+    const { isModelInstalled } = await import('./embedding/ModelRegistry')
+
+    assert(
+      await isModelInstalled(modelCacheDir),
+      `the pinned embedding model is not installed in ${modelCacheDir}; ` +
+        'the launcher failed to provision it before the smoke test'
+    )
+
+    const backend = new WorkerEmbeddingBackend({
+      cacheDir: modelCacheDir,
+      batchSize: 2,
+      maxRetries: 1,
+      retryDelay: 200
+    })
+    try {
+      const [result] = await backend.embedBatch(['KnowNote smoke embedding check'], 'document')
+      assert(result, 'the embedding worker returned no result')
+      assert(
+        result.model === LOCAL_EMBEDDING_MODEL.id,
+        `the worker embedded with model ${result.model}, expected ${LOCAL_EMBEDDING_MODEL.id}`
+      )
+      assert(
+        result.dimensions === LOCAL_EMBEDDING_MODEL.dimensions,
+        `the worker returned ${result.dimensions} dimensions, expected ${LOCAL_EMBEDDING_MODEL.dimensions}`
+      )
+      assert(
+        result.embedding.length === result.dimensions &&
+          Array.from(result.embedding).every((value) => Number.isFinite(value)),
+        'the worker produced a truncated or non-finite embedding'
+      )
+      pass(
+        `the local embedding model embeds inside the worker thread (${result.dimensions} dims)`
+      )
+    } finally {
+      await backend.dispose()
+    }
+  }
 
   // --- document import: the real loaders, against real files ----------------
   // The fixtures live in test/fixtures and are handed over by
@@ -1071,6 +1157,19 @@ export async function runSmokeTest(): Promise<number> {
     console.error('[SmokeTest] FAIL -', error instanceof Error ? error.message : error)
     return 1
   } finally {
+    // Stop the watchers the checks armed BEFORE closing the database, in every
+    // path - happy or failed. `folderWatch.stop()` clears pending debounce
+    // timers and closes the FSWatchers without touching the database, so a
+    // replayed directory event can no longer schedule a reconcile into a closed
+    // database.
+    if (smokeKnowledge) {
+      try {
+        smokeKnowledge.stopFolderWatching()
+      } catch {
+        // Best effort: a teardown failure must not mask the real result.
+      }
+      smokeKnowledge = null
+    }
     // Go through the real shutdown path too, so a broken close fails the run.
     closeDatabase()
   }

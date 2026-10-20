@@ -22,6 +22,7 @@ interface Capture {
 function makeLoader(captures: Capture[], pipelineOptions: Record<string, unknown>[] = []) {
   const env = {
     cacheDir: null as string | null,
+    localModelPath: null as string | null,
     allowRemoteModels: true,
     allowLocalModels: false,
     useFSCache: false
@@ -96,8 +97,41 @@ test('加载 pipeline 时关闭远端模型并指向缓存目录', async () => {
   assert.equal(env.cacheDir, '/tmp/knownote-models')
   assert.equal(env.allowRemoteModels, false)
   assert.equal(env.allowLocalModels, true)
+  // The local lookup must resolve against the cache dir too. transformers.js' own
+  // default is a `models/` directory inside its package — inside app.asar once
+  // packaged — where the user's weights can never be; that default is what turned
+  // every model file into "Not Found" in the AppImage
+  // (docs/appimage-embedding-indexing-bug.md §5.3).
+  assert.equal(env.localModelPath, '/tmp/knownote-models')
   assert.equal(pipelineOptions[0].dtype, LOCAL_EMBEDDING_MODEL.dtype)
   assert.equal(pipelineOptions[0].revision, LOCAL_EMBEDDING_MODEL.revision)
+})
+
+// A bare `Not Found` is not a diagnosis: embeddingWorker forwards error.message
+// verbatim into documents.error_message, so the message the loader produced is
+// what the user's own database stores (docs/appimage-embedding-indexing-bug.md §4).
+// This asserts the three facts the error had lost: the model, the cache directory
+// and whether the weights are actually on disk.
+test('模型加载失败时错误消息带上模型、缓存目录与权重文件诊断', async () => {
+  const loader: TransformersModuleLoader = async () => {
+    throw new Error('Not Found')
+  }
+  const backend = new LocalEmbeddingBackend({ cacheDir: '/tmp/x', loadTransformers: loader })
+
+  await assert.rejects(backend.embed('x', 'document'), (error: Error) => {
+    const message = String(error.message)
+    assert.ok(message.includes('Not Found'), 'the original reason must survive in the message')
+    assert.ok(
+      message.includes(LOCAL_EMBEDDING_MODEL.id),
+      'the message must name the pinned model'
+    )
+    assert.ok(message.includes('/tmp/x'), 'the message must name the model cache directory')
+    assert.ok(
+      message.includes('missing from disk'),
+      'a model file that is not there must be reported as missing, not as unreadable'
+    )
+    return true
+  })
 })
 
 test('空输入不触发 pipeline 加载', async () => {
@@ -107,6 +141,7 @@ test('空输入不触发 pipeline 加载', async () => {
     return {
       env: {
         cacheDir: null,
+        localModelPath: null,
         allowRemoteModels: true,
         allowLocalModels: false,
         useFSCache: false

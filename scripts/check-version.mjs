@@ -127,14 +127,26 @@ export const comparePrerelease = (a, b) => {
  * release would red every pull request over a version that was never published.
  * Such tags are reported separately by `bareVersionTags` instead.
  *
+ * `line` narrows the search to a pre-release line. A fork that releases below the
+ * upstream version on `1.5.3-rust.N` ships a package version that compares lower
+ * than the upstream tag (`1.5.3-rust.1` < `1.5.3`) on purpose - the whole point of
+ * the pre-release is that the two version lines can never collide
+ * (PROJECT-SUMMARY.md §6.7). Comparing it against the upstream tag reads that as
+ * "fallen behind" and reds every pull request on the fork, so when the checked
+ * package version carries a pre-release, only tags on the same line - sharing its
+ * first pre-release identifier - count as what it must not fall behind. Release
+ * versions, which is what upstream is, keep the unfiltered search.
+ *
  * Takes the list rather than reading git, so the selection rule is testable. It
  * re-compares with `compareVersions` instead of trusting `git tag --sort`, so a
  * pre-release or a two-digit component cannot win by lexicographic accident -
  * `v1.0.10` is newer than `v1.0.9`, but sorts before it as a string.
  *
+ * @param {string[]} tags
+ * @param {string | null} line first pre-release identifier to filter on, or null
  * @returns {string | null} the tag as given, or null when nothing is usable.
  */
-export const newestVersionTag = (tags) => {
+export const newestVersionTag = (tags, line = null) => {
   let best = null
   let bestParsed = null
 
@@ -142,6 +154,10 @@ export const newestVersionTag = (tags) => {
     if (!tag.startsWith('v')) continue
     const parsed = parseVersion(tag.slice(1))
     if (!parsed) continue
+    if (line !== null) {
+      if (parsed.prerelease === null) continue
+      if (parsed.prerelease.split('.')[0] !== line) continue
+    }
     if (bestParsed === null || compareVersions(parsed, bestParsed) > 0) {
       best = tag
       bestParsed = parsed
@@ -279,7 +295,16 @@ const checkCompareMode = (version, tags) => {
     )
   }
 
-  const latest = tags === null ? null : newestVersionTag(tags)
+  // The package version decides which tags it must not fall behind: a release
+  // version compares against every tag, a pre-release version only against tags
+  // on its own line (see newestVersionTag's `line` parameter for why - upstream
+  // tags read as "already shipped" otherwise, on a fork that releases below them
+  // on purpose).
+  const packageParsed = parseVersion(version)
+  const line = packageParsed && packageParsed.prerelease
+    ? packageParsed.prerelease.split('.')[0]
+    : null
+  const latest = tags === null ? null : newestVersionTag(tags, line)
 
   if (latest === null) {
     // In CI this must not happen, and it is the failure this guard is most likely
@@ -290,23 +315,25 @@ const checkCompareMode = (version, tags) => {
     // Failing loudly is the same call as allowMissingDependencies: false in
     // electron-builder.yml: a check that cannot run must not look like one that ran.
     if (inActions) {
+      const reason = line
+        ? `no version tag on the ${line} pre-release line is reachable`
+        : 'no version tag is reachable'
       return fail(
-        `no version tag is reachable, so this check has nothing to compare against.\n` +
-          `  In CI that means the checkout did not fetch tags. verify.yml must use\n` +
-          `  \`fetch-depth: 0\`: actions/checkout only fetches every tag when it fetches\n` +
-          `  all history (\`fetch-tags\` adds just the checked-out ref's own tag).`
+        `${reason}, so this check has nothing to compare against.\n` +
+          `  In CI that means either the checkout did not fetch tags (verify.yml\n` +
+          `  must use \`fetch-depth: 0\`) or no release was ever tagged on the line\n` +
+          `  package.json is on.`
       )
     }
 
     return report(
-      `check:version — package.json ${version}; no version tag reachable, nothing to compare ` +
+      `check:version — package.json ${version}; no version tag${line ? ` on the ${line} line` : ''} reachable, nothing to compare ` +
         `(not a git clone, or a shallow checkout without tags)`,
       false
     )
   }
 
   const latestVersion = latest.replace(/^v/, '')
-  const packageParsed = parseVersion(version)
   const latestParsed = parseVersion(latestVersion)
 
   if (!packageParsed || !latestParsed) {
@@ -315,7 +342,7 @@ const checkCompareMode = (version, tags) => {
 
   if (compareVersions(packageParsed, latestParsed) < 0) {
     return fail(
-      `package.json is at ${version} but the newest version tag is ${latest}. ` +
+      `package.json is at ${version} but the newest version tag${line ? ` on the ${line} line` : ''} is ${latest}. ` +
         `The packaged app and its artifacts would claim a version older than what has ` +
         `already shipped, and the updater would ignore the newer release. ` +
         `Run \`npm version ${latestVersion}\` (or higher) to catch up.`
@@ -324,7 +351,8 @@ const checkCompareMode = (version, tags) => {
 
   const relation = compareVersions(packageParsed, latestParsed) === 0 ? 'matches' : 'is ahead of'
   return report(
-    `check:version — package.json ${version} ${relation} the newest version tag ${latest}`,
+    `check:version — package.json ${version} ${relation} the newest version tag` +
+      `${line ? ` on the ${line} line` : ''} ${latest}`,
     false
   )
 }

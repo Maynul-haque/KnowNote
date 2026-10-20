@@ -31,7 +31,13 @@ const localOnlyConnectionManager = (): ConnectionManager =>
 /** Records the size of every array that reaches the ONNX pipeline. */
 function localService(batchSizes: number[], options: Partial<EmbeddingServiceOptions> = {}) {
   const loader: TransformersModuleLoader = async () => ({
-    env: { cacheDir: null, allowRemoteModels: false, allowLocalModels: true, useFSCache: true },
+    env: {
+      cacheDir: null,
+      localModelPath: null,
+      allowRemoteModels: false,
+      allowLocalModels: true,
+      useFSCache: true
+    },
     pipeline: async () => {
       const extractor: FeatureExtractionPipeline = async (texts) => {
         batchSizes.push(texts.length)

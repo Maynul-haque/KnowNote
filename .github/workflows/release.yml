@@ -343,6 +343,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The AppImage gate runs the worker-thread embedding check against the
+      # pinned model, so the cache that `verify.yml` fills on pull requests
+      # covers the release too: a hit makes the prime step below a no-op, and
+      # the 134 MB download happens once per pin, not once per run.
+      - name: Cache eval embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.config/knownote/models
+          key: knownote-eval-model-${{ hashFiles('src/main/embedding/localModel.ts') }}
+
       # electron-builder's AppImage tooling needs libfuse2, and icon detection
       # needs `file`. Both are present on the runner image, but neither is
       # guaranteed to stay there, and a missing one fails late and obscurely.
@@ -360,6 +370,13 @@ jobs:
         run: |
           npm run build:unpack
           xvfb-run -a npm run smoke:packaged
+
+      # Provisions ~/.config/knownote/models on a cold cache (node_modules'
+      # electron and the build produced by the step above are what it needs).
+      # `--eval-prepare` only downloads the pinned model and never touches the
+      # database, so this cannot pollute the release in any way.
+      - name: Prime the pinned embedding model cache
+        run: node scripts/eval.mjs --prepare
 
       # AppImage and deb only, and electron-builder is called directly rather
       # than through `npm run build:linux`: the script already passes
@@ -384,6 +401,19 @@ jobs:
           --config.publish.owner="${{ env.PUBLISH_OWNER }}"
           --config.publish.repo="${{ env.PUBLISH_REPO }}"
           --publish always
+
+      # The artifact users actually download on Linux is this AppImage, not the
+      # unpacked build above - and the one code path that differs between the
+      # two is the embedding worker thread, whose entry inside app.asar once
+      # turned every model lookup into `Not Found` while the unpacked smoke test
+      # stayed green (docs/appimage-embedding-indexing-bug.md). This runs the
+      # smoke test against the AppImage's own contents, including the
+      # worker-thread embedding check, and fails this job when that breaks
+      # - a failing gate has to hold the artifact it vetoes.
+      - name: Smoke test the AppImage artifact
+        run: xvfb-run -a npm run smoke:appimage
+        env:
+          SMOKE_MODEL_CACHE: ~/.config/knownote/models
 
   # electron-builder uploads into the draft created by `create-draft` (see
   # publish.releaseType in electron-builder.yml, and the note on that job for
