@@ -7,8 +7,9 @@ name: Verify
 # `AnkiExport is not a constructor` from a lost CJS interop) all packaged cleanly.
 #
 # `npm run smoke:packaged` launches the real packaged executable and self-checks
-# it, so it is the step that actually catches those. It runs on all three
-# platforms because the native addons are arch-specific:
+# it, so it is the step that actually catches those. It runs on each platform in
+# the matrix because the native addons are arch-specific (macOS is currently
+# held - see the matrix comment below):
 #
 #   better-sqlite3 (prebuilds/<platform>-<arch>.node), vec0.so/.dylib/.dll, skia.*.node
 #
@@ -34,7 +35,15 @@ jobs:
       # Report every platform's result instead of stopping at the first failure.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macOS is held, not dropped: on this fork the job queued for exactly
+        # fifteen minutes and was cancelled with zero steps executed, twice
+        # (runs 39438420883 and 39443187754, the second one re-run by hand) -
+        # no runner was ever assigned. Waiting for one costs every run fifteen
+        # minutes and still ends red, so the entry is out until macOS runner
+        # access is available again. Restore `macos-latest` here when it is;
+        # `release.yml` still builds and publishes the macOS artifacts on a tag,
+        # and the packaged-app step below still covers Windows.
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - name: Checkout code
