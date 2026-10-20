@@ -18,7 +18,9 @@ name: Verify
 
 on:
   pull_request:
-  workflow_dispatch:# Verification only needs to read the repository.
+  workflow_dispatch:
+
+# Verification only needs to read the repository.
 permissions:
   contents: read
 
