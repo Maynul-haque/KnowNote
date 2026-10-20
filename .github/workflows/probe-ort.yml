@@ -1,7 +1,10 @@
 name: Probe ORT build
 
-# Scratch workflow: does the baseline reproduce with the ONNX Runtime build that
-# onnxruntime-node ships, rather than Microsoft's official release tarball?
+# Scratch workflow: on one runner, produce the reference baseline with the real
+# TypeScript pipeline, then ask the Rust port to reproduce it. If both drift the
+# same way with the CPU's ISA, parity is a same-hardware property and the gate
+# must compare against the reference rather than a committed file.
+#
 # Delete this file and branch once the question is answered.
 
 on:
@@ -14,11 +17,19 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -26,99 +37,58 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Cache the pinned embedding model
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Machine identity
+        run: |
+          nproc
+          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' | grep -E '^(avx|avx2|avx512f|avx512_vnni|amx)' | tr '\n' ' '
+          echo
+
+      - name: Cache the reference model
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/.knownote-models
-          key: knownote-rust-model-${{ hashFiles('crates/knownote-embed/src/local_model.rs') }}
+          path: ~/.config/knownote/models
+          key: knownote-eval-model-${{ hashFiles('src/main/embedding/localModel.ts') }}
 
-      - name: Download the pinned embedding model
+      - name: Build the app
+        run: npm run build
+
+      - name: Produce the reference baseline on this machine
+        run: |
+          xvfb-run -a node scripts/eval.mjs --prepare
+          xvfb-run -a node scripts/eval.mjs
+          node -e "const b=require('./docs/eval/baseline-v1.6.json');console.log('reference recallAt1', b.metrics.recallAt1)"
+
+      - name: Download the pinned model for the Rust port
         run: |
           cargo run -p knownote-embed --example download_model -- .knownote-models
           test -f .knownote-models/Xenova/multilingual-e5-small/761b726dd34fb83930e26aab4e9ac3899aa1fa78/onnx/model_quantized.onnx
 
-      - name: Fetch the onnxruntime-node build
-        run: |
-          set -euo pipefail
-          curl -fsSL -o /tmp/ort-node.tgz \
-            https://registry.npmjs.org/onnxruntime-node/-/onnxruntime-node-1.30.0.tgz
-          mkdir -p /tmp/ort-node
-          tar -xzf /tmp/ort-node.tgz -C /tmp/ort-node
-          find /tmp/ort-node -name 'libonnxruntime.so*' -print
-
-      - name: Fetch the official runtime
+      - name: Fetch ONNX Runtime and PDFium
         run: |
           set -euo pipefail
           curl -fsSL -o /tmp/ort.tgz \
             https://github.com/microsoft/onnxruntime/releases/download/v1.30.0/onnxruntime-linux-x64-1.30.0.tgz
           tar -xzf /tmp/ort.tgz -C /tmp
-
-      # Five consecutive runs. If exact parity is real, all five pass; a mix
-      # means the baseline is not reproducible run-to-run in this process.
-      - name: Baseline, five runs, npm-shipped runtime
-        env:
-          KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
-        run: |
-          set -uo pipefail
-          ORT_LIB="$(find /tmp/ort-node -path '*linux/x64/libonnxruntime.so*' -print -quit)"
+          ORT_LIB="$(find /tmp/onnxruntime-linux-x64-1.30.0 -name 'libonnxruntime.so' -print -quit)"
           test -n "$ORT_LIB"
-          echo "using $ORT_LIB"
-          failures=0
-          for run in 1 2 3 4 5; do
-            echo "--- npm runtime, run $run"
-            if ! KNOWNOTE_ONNXRUNTIME="$ORT_LIB" \
-              cargo test -p knownote-eval --test baseline --locked -- --ignored --nocapture; then
-              failures=$((failures + 1))
-            fi
-          done
-          echo "npm runtime: $failures of 5 failed"
-
-      # The failing run used `--workspace -- --ignored`, not the single test.
-      # Same command, three times, with the machine's identity printed.
-      - name: Workspace ignored suite, three runs, official runtime
-        if: always()
-        env:
-          KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
-        run: |
-          set -uo pipefail
-          echo "--- machine"
-          nproc
-          grep -m1 'model name' /proc/cpuinfo
-          grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' | grep -E '^(avx|avx2|avx512f|avx512_vnni|amx)' | tr '\n' ' '
-          echo
+          echo "KNOWNOTE_ONNXRUNTIME=$ORT_LIB" >> "$GITHUB_ENV"
 
           curl -fsSL -o /tmp/pdfium.tgz \
             https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz
           mkdir -p /tmp/pdfium
           tar -xzf /tmp/pdfium.tgz -C /tmp/pdfium
           PDFIUM_LIB="$(find /tmp/pdfium -name 'libpdfium.so' -print -quit)"
+          test -n "$PDFIUM_LIB"
+          echo "KNOWNOTE_PDFIUM=$(dirname "$PDFIUM_LIB")" >> "$GITHUB_ENV"
 
-          ORT_LIB="$(find /tmp/onnxruntime-linux-x64-1.30.0 -name 'libonnxruntime.so' -print -quit)"
-          failures=0
-          for run in 1 2 3; do
-            echo "--- workspace run $run"
-            if ! KNOWNOTE_ONNXRUNTIME="$ORT_LIB" KNOWNOTE_PDFIUM="$(dirname "$PDFIUM_LIB")" \
-              cargo test --workspace --locked -- --ignored; then
-              failures=$((failures + 1))
-            fi
-          done
-          echo "workspace: $failures of 3 failed"
-
-      - name: Baseline, five runs, official runtime
-        if: always()
+      - name: Rust must reproduce the reference on the same machine
         env:
           KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
         run: |
-          set -uo pipefail
-          ORT_LIB="$(find /tmp/onnxruntime-linux-x64-1.30.0 -name 'libonnxruntime.so' -print -quit)"
-          test -n "$ORT_LIB"
-          echo "using $ORT_LIB"
-          failures=0
-          for run in 1 2 3 4 5; do
-            echo "--- official runtime, run $run"
-            if ! KNOWNOTE_ONNXRUNTIME="$ORT_LIB" \
-              cargo test -p knownote-eval --test baseline --locked -- --ignored --nocapture; then
-              failures=$((failures + 1))
-            fi
-          done
-          echo "official runtime: $failures of 5 failed"
+          git --no-pager diff --stat docs/eval/baseline-v1.6.json
+          node -e "const b=require('./docs/eval/baseline-v1.6.json');console.log('reference recallAt1', b.metrics.recallAt1)"
+          cargo test --workspace --locked -- --ignored --nocapture
