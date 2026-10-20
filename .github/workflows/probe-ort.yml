@@ -1,0 +1,72 @@
+name: Probe ORT build
+
+# Scratch workflow: does the baseline reproduce with the ONNX Runtime build that
+# onnxruntime-node ships, rather than Microsoft's official release tarball?
+# Delete this file and branch once the question is answered.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache the pinned embedding model
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.knownote-models
+          key: knownote-rust-model-${{ hashFiles('crates/knownote-embed/src/local_model.rs') }}
+
+      - name: Download the pinned embedding model
+        run: |
+          cargo run -p knownote-embed --example download_model -- .knownote-models
+          test -f .knownote-models/Xenova/multilingual-e5-small/761b726dd34fb83930e26aab4e9ac3899aa1fa78/onnx/model_quantized.onnx
+
+      - name: Fetch the onnxruntime-node build
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/ort-node.tgz \
+            https://registry.npmjs.org/onnxruntime-node/-/onnxruntime-node-1.30.0.tgz
+          mkdir -p /tmp/ort-node
+          tar -xzf /tmp/ort-node.tgz -C /tmp/ort-node
+          find /tmp/ort-node -name 'libonnxruntime.so*' -print
+
+      - name: Baseline with the npm-shipped runtime
+        env:
+          KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
+        run: |
+          set -euo pipefail
+          ORT_LIB="$(find /tmp/ort-node -path '*linux/x64/libonnxruntime.so*' -print -quit)"
+          test -n "$ORT_LIB"
+          echo "using $ORT_LIB"
+          KNOWNOTE_ONNXRUNTIME="$ORT_LIB" \
+            cargo test -p knownote-eval --test baseline --locked -- --ignored --nocapture
+
+      - name: Baseline with the official runtime, for the record
+        if: always()
+        env:
+          KNOWNOTE_EVAL_MODEL_CACHE: ${{ github.workspace }}/.knownote-models
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/ort.tgz \
+            https://github.com/microsoft/onnxruntime/releases/download/v1.30.0/onnxruntime-linux-x64-1.30.0.tgz
+          tar -xzf /tmp/ort.tgz -C /tmp
+          ORT_LIB="$(find /tmp/onnxruntime-linux-x64-1.30.0 -name 'libonnxruntime.so' -print -quit)"
+          test -n "$ORT_LIB"
+          echo "using $ORT_LIB"
+          KNOWNOTE_ONNXRUNTIME="$ORT_LIB" \
+            cargo test -p knownote-eval --test baseline --locked -- --ignored --nocapture
