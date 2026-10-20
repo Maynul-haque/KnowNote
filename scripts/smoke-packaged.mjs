@@ -30,17 +30,25 @@
  *                          model is copied into the throwaway profile and the
  *                          smoke test runs the worker-thread embedding check.
  *                          --appimage refuses to run without it: a gate that
- *                          skips its strongest check cannot be a gate.
+ *                          skips its strongest check cannot be a gate. A
+ *                          leading `~` is expanded, because env values reach
+ *                          this script unexpanded on CI.
  */
 
 import { spawn } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const DIST_DIR = resolve('dist')
 const APPIMAGE_FLAG = '--appimage'
-const MODEL_SOURCE = process.env.SMOKE_MODEL_CACHE
+
+// GitHub Actions' `env:` values are passed through literally: the shell never
+// sees `SMOKE_MODEL_CACHE: ~/.config/knownote/models`, so nothing expands the
+// `~` there, and `existsSync('~/.config/...')` is always false. That is how the
+// first AppImage dispatch downloaded the model and then still reported that the
+// cache "does not hold" it.
+const MODEL_SOURCE = expandHome(process.env.SMOKE_MODEL_CACHE)
 
 // Loading the real model inside a worker thread is the slowest check (ONNX cold
 // start on any disk), so model-mode runs get a proportionate default timeout.
@@ -50,6 +58,18 @@ const TIMEOUT_MS = Number(process.env.SMOKE_TEST_TIMEOUT_MS ?? DEFAULT_TIMEOUT_M
 const fail = (message) => {
   console.error(`[smoke:packaged] ${message}`)
   process.exit(1)
+}
+
+/**
+ * `~` expansion for paths handed over through env, where no shell runs. A bare
+ * `~` and `~/rest` expand; `~user/...` stays untouched and is validated as a
+ * real path by the caller.
+ */
+function expandHome(path) {
+  if (!path) return path
+  if (path === '~') return homedir()
+  if (path.startsWith('~/')) return join(homedir(), path.slice(1))
+  return path
 }
 
 /** electron-builder.yml is a flat file for the keys we need; avoid a YAML dep. */
@@ -138,6 +158,26 @@ function spawnCapture(command, args, cwd) {
 const useAppImage = process.argv.includes(APPIMAGE_FLAG)
 const candidates = useAppImage ? [] : findExecutable()
 
+// Validate the model cache before any heavyweight work: an unprovisioned cache
+// is the fastest possible failure, and in AppImage mode it would otherwise burn
+// the extraction of a half-gigabyte artifact first. From here on MODEL_SOURCE
+// is the resolved absolute path; the raw env value never appears again and the
+// logs show what was actually looked at.
+let modelRevision
+if (MODEL_SOURCE) {
+  console.log(`[smoke:packaged] model cache ${MODEL_SOURCE}`)
+  modelRevision = readPinnedRevision()
+  const primaryWeights = modelRevision
+    ? join(MODEL_SOURCE, 'Xenova', 'multilingual-e5-small', modelRevision, 'onnx', 'model_quantized.onnx')
+    : null
+  if (!modelRevision || !existsSync(primaryWeights)) {
+    fail(
+      `${MODEL_SOURCE} does not hold the pinned model` +
+        `${modelRevision ? ` (${modelRevision})` : ''}; provision it first: node scripts/eval.mjs --prepare`
+    )
+  }
+}
+
 let scratchDir
 let executable
 
@@ -201,21 +241,11 @@ const args = [
 ]
 
 if (MODEL_SOURCE) {
-  const revision = readPinnedRevision()
-  const primaryWeights = revision
-    ? join(MODEL_SOURCE, 'Xenova', 'multilingual-e5-small', revision, 'onnx', 'model_quantized.onnx')
-    : null
-  if (!revision || !existsSync(primaryWeights)) {
-    fail(
-      `SMOKE_MODEL_CACHE (${MODEL_SOURCE}) does not hold the pinned model` +
-        `${revision ? ` (${revision})` : ''}; provision it first: node scripts/eval.mjs --prepare`
-    )
-  }
   // Copy, never point at: a smoke test must not mutate the cache (transformers.js
   // writes unresolved partials and aliases into the directory it reads).
   cpSync(MODEL_SOURCE, join(dataDir, 'models'), { recursive: true })
   args.push(`--smoke-model-cache=${join(dataDir, 'models')}`)
-  console.log(`[smoke:packaged] model check enabled from ${MODEL_SOURCE}`)
+  console.log(`[smoke:packaged] model check enabled from ${MODEL_SOURCE} (revision ${modelRevision})`)
 }
 
 // The Chromium sandbox needs either a setuid helper or user namespaces, and
