@@ -6,6 +6,8 @@
 
 pub mod loader;
 pub mod markdown;
+pub mod pdf;
 
 pub use loader::{DocumentLoadResult, DocumentLoader, IngestError};
 pub use markdown::MarkdownLoader;
+pub use pdf::{layout_page_text, PdfLoader, PositionedTextItem};

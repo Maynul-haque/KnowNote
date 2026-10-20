@@ -36,13 +36,37 @@ import {
   buildDocumentBlocks
 } from '../src/main/services/blocks/documentBlocks.ts'
 import { MarkdownLoader } from '../src/main/services/loaders/MarkdownLoader.ts'
-
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const OUT = join(ROOT, 'crates', 'knownote-core', 'tests', 'fixtures', 'chunk-parity.json')
 
 /** The byte offset of a UTF-16 code-unit index into `text`. */
 function byteOffsetOf(text, utf16Index) {
   return Buffer.byteLength(text.slice(0, utf16Index), 'utf8')
+}
+
+/** The UTF-16 code-unit offset of a byte offset into `text`. */
+//
+// The inverse of `byteOffsetOf`, needed for the PDF cases: the Rust PDF
+// loader records byte offsets, and the TypeScript side of this fixture works
+// in UTF-16 code units. Walking code points carries each one's length in both
+// units; a byte offset that is not a character boundary is an error, not a
+// silent misalignment.
+function utf16OffsetOf(text, byteOffset) {
+  let byte = 0
+  let utf16 = 0
+
+  if (byteOffset === 0) return 0
+
+  for (const character of text) {
+    byte += Buffer.byteLength(character, 'utf8')
+    utf16 += character.codePointAt(0) > 0xffff ? 2 : 1
+    if (byte === byteOffset) return utf16
+    if (byte > byteOffset) {
+      throw new Error(`byte offset ${byteOffset} is not a character boundary`)
+    }
+  }
+
+  throw new Error(`byte offset ${byteOffset} is past the end of the text (${byte} bytes)`)
 }
 
 /** The option sets every case is run with. */
@@ -226,6 +250,107 @@ async function main() {
           )
         }))
       )
+    })
+  }
+
+  // The PDF cases.
+  //
+  // This tree's PDF loader is the Rust one (PDFium), and its output is the
+  // pin in `pdf-loader.json`, recorded by
+  // `crates/knownote-ingest/examples/gen-pdf-loader-fixture.rs`. Rather than
+  // running a TypeScript PDF loader in parallel, the recorded pages and
+  // blocks are fed through the real `buildDocumentBlocks()` and the real
+  // `ChunkingService()` here — which is the differential gate the paginated
+  // path actually needs: page numbers inside blocks, chunks that may or may
+  // not span a page boundary, and none of both exercised by the corpus and
+  // synthetic cases, which are all flat markdown.
+  //
+  // The recorded byte offsets are converted to the UTF-16 units the
+  // TypeScript side works in; the byte form stays in the fixture for the
+  // Rust test to compare against.
+  const pdfPin = JSON.parse(
+    readFileSync(
+      join(ROOT, 'crates', 'knownote-core', 'tests', 'fixtures', 'pdf-loader.json'),
+      'utf8'
+    )
+  )
+
+  for (const pin of pdfPin.cases ?? []) {
+    const content = pin.content
+
+    const pages = pin.pages.map((page) => ({
+      pageNumber: page.page_number,
+      content: page.content,
+      startOffsetUtf16: utf16OffsetOf(content, page.start_offset),
+      startOffset: page.start_offset,
+      endOffsetUtf16: utf16OffsetOf(content, page.end_offset),
+      endOffset: page.end_offset,
+      ...(page.bbox == null ? {} : { bbox: page.bbox }),
+      blocks: (page.blocks ?? []).map((block) => ({
+        text: block.text,
+        startOffsetUtf16: utf16OffsetOf(content, block.start_offset),
+        startOffset: block.start_offset,
+        endOffsetUtf16: utf16OffsetOf(content, block.end_offset),
+        endOffset: block.end_offset,
+        ...(block.bbox == null ? {} : { bbox: block.bbox })
+      }))
+    }))
+
+    // The structure the TypeScript builder slices: the same pages with the
+    // UTF-16 offsets the original's loaders anchor to the canonical text.
+    const structure = {
+      type: 'pages',
+      pages: pages.map((page) => ({
+        pageNumber: page.pageNumber,
+        content: page.content,
+        startOffset: page.startOffsetUtf16,
+        endOffset: page.endOffsetUtf16,
+        ...(page.bbox == null ? {} : { bbox: page.bbox }),
+        blocks: page.blocks.map((block) => ({
+          text: block.text,
+          startOffset: block.startOffsetUtf16,
+          endOffset: block.endOffsetUtf16,
+          ...(block.bbox == null ? {} : { bbox: block.bbox })
+        }))
+      }))
+    }
+
+    const blocks = assignBlockIds(
+      'doc_parity',
+      buildDocumentBlocks({ content, structure })
+    )
+
+    cases.push({
+      name: `pdf/${pin.name}`,
+      content,
+      // What the Rust loader produced, so the Rust block builder is compared
+      // against the TypeScript one on the paginated path too.
+      pdf: {
+        content,
+        title: pin.title,
+        mimeType: pin.mimeType,
+        metadata: pin.metadata,
+        pages
+      },
+      blocks: blocks.map((block) => ({
+        id: block.id,
+        kind: block.kind,
+        page: block.page,
+        level: block.level,
+        text: block.text,
+        startOffset: byteOffsetOf(content, block.startOffset),
+        endOffset: byteOffsetOf(content, block.endOffset)
+      })),
+      runs: OPTION_SETS.map(({ name, options }) => ({
+        mode: 'blocks',
+        name,
+        options,
+        chunks: serialiseChunks(
+          content,
+          service.chunkBlocks(content, blocks, options),
+          new Map(blocks.map((block) => [block.id, block.text]))
+        )
+      }))
     })
   }
 

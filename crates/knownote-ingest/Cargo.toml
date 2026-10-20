@@ -14,6 +14,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
+# The PDF loader runs the real Pdfium through `pdfium-render`. The library itself is
+# not compiled here and is not carried in this repository: it binds at runtime to a
+# pre-built Pdfium (bblanchon/pdfium-binaries, Apache-2.0) next to the executable, or
+# wherever `KNOWNOTE_PDFIUM` points. Rendering is out of scope for this crate, so the
+# `image` feature family stays off; `pdfium_7881` pins the FPDF_* API the bindings
+# were generated from instead of following the crate's own `pdfium_latest`.
+pdfium-render = { version = "0.9", default-features = false, features = ["thread_safe", "pdfium_7881"] }
+
 [dev-dependencies]
 serde_json = { workspace = true }
 tempfile = "3"

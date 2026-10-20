@@ -257,7 +257,7 @@ Ordered by how much it unblocks.
 
 | # | What | Notes |
 |---|---|---|
-| 1 | **The remaining loaders** — PDF, DOCX, PPTX, HTML | PDF is the app's most important input format. `pdfium-render` with **prebuilt** PDFium (bblanchon/pdfium-binaries, Apache-2.0) — dynamic binding, no source compile. DOCX/PPTX are unzip + `quick-xml`; HTML is `scraper` + readability. |
+| 1 | **The remaining loaders** — DOCX, PPTX, HTML | ~~PDF~~ done (Stage 2, below). The rest are mechanical: DOCX/PPTX are unzip + `quick-xml`; HTML is `scraper` + readability. |
 | 2 | **The LLM protocol adapters** | OpenAI Completions, OpenAI Responses, Anthropic Messages, Google Generative AI, and streaming. `rig` or raw `reqwest`. The chat turn lifecycle and the citation resolver come with it. |
 | 3 | **The Tauri shell** | `src-tauri/`, one Rust command per IPC channel, and a `window.api` shim that keeps the renderer's shape identical so the 13,672 lines of React keep working untouched. |
 | 4 | **The MCP server** | `rmcp` is a direct port: 5 read-only tools, same provenance shape. |
@@ -265,17 +265,48 @@ Ordered by how much it unblocks.
 | 6 | **The .apkg export** | `anki-apkg-export` is a JS library. A `.apkg` is a ZIP with an SQLite `collection.anki2` plus media — reimplementable with `rusqlite` + `zip`. |
 | 7 | **Pruning the package** | The Linux build ships ONNX Runtime for every platform plus a 260 MB CUDA provider bundle. `docs/dependency-audit.md` names exactly which files to drop. Would roughly halve the download — but it is a cross-platform packaging change with a real risk of shipping a broken app, so it needs its own change with its own rollback. |
 
-### The next task
+### Stage 2 — the PDF loader: where it stands
 
-**The PDF loader.** It is the last big parser and the most important input format. It uses
-`pdfium-render` against the **prebuilt** PDFium binary (bblanchon/pdfium-binaries,
-Apache-2.0), loaded dynamically — no source compile, no C++ toolchain step on the machine.
+The loader is written and proven locally; only the CI dispatch and the release
+decision are left. The pieces:
 
-Note the one thing the PDF loader must preserve: the page boundaries and the character
-offsets. A PDF's blocks carry a page number and a normalised bounding box, and that is what
-lets a citation point at *page 7, paragraph 3* rather than at a chunk. The
-`multipage.pdf` fixture in `test/fixtures/` is the test, and the parity fixture should
-grow a PDF case the same way the Markdown one did.
+* **The port** — `crates/knownote-ingest/src/pdf.rs`. Everything
+  `PdfLoader.ts` + `pdfTextLayout.ts` did, on PDFium: text objects → lines →
+  paragraphs, byte offsets throughout, same constants (0.5 / 0.6 / 1.0 / 0.25),
+  same content contract (pages joined by a blank line, trimmed at the end).
+  One deliberate difference is the key above: `PageInfo.metadata`
+  (width/height) is not carried, because nothing reads it.
+* **The dependency** — `pdfium-render = { version = "0.9", default-features = false, features = ["thread_safe", "pdfium_7881"] }`.
+  The `pdfium_7881` feature pins the FPDF API surface to the bblanchon
+  `chromium/7881` build; other builds shift that surface and must not be
+  swapped silently. `unsafe_code` stays forbidden: the high-level API is safe.
+* **The library, at runtime** — never compiled, never vendored. Resolution
+  order: `KNOWNOTE_PDFIUM` (a directory holding the shared library) → the
+  executable's directory → the system loader. Bound once per process into a
+  `OnceLock`; a missing library is a clean error, not a panic. Windows needs
+  the build-tool wrapper described in §3 for cargo, but not for this: PDFium
+  is a plain dynamic load.
+* **The honest differential, engine-style.** pdf.js and PDFium are different
+  engines; byte-equality between them is not the bar. Instead there are three
+  gates: (1) the ten synthetic layout tests of `test/pdfTextLayout.test.ts`
+  ported item for item into `crates/knownote-ingest/tests/pdf_layout.rs`,
+  engine-free and always on; (2) a committed pin —
+  `crates/knownote-core/tests/fixtures/pdf-loader.json`, dumped by
+  `cargo run -p knownote-ingest --example gen-pdf-loader-fixture` — that the
+  loader must reproduce exactly (`cargo test --workspace -- --ignored` with
+  `KNOWNOTE_PDFIUM` set); (3) the chunk-parity fixture now carries
+  `pdf/sample.pdf` and `pdf/multipage.pdf`, built by running the *TypeScript*
+  block builder and chunker over the recorded pages, so the paginated path —
+  page breaks inside a chunk, spans across pages — is compared engine-free.
+* **What still runs green without any PDFium on the machine**: everything
+  except the ignored gate. With PDFium 7881 present, all of it green.
+
+### The remaining Stage-2 steps
+
+1. `cargo test --workspace` and `npm test` green (checked on the
+   implementation machine; replay on your machine should match).
+2. Push, then dispatch `verify.yml` (workflow id `390334937`) to prove it on
+   CI. No release yet — the tagging cadence is a separate decision.
 
 ---
 

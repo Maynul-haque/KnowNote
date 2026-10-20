@@ -14,7 +14,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use knownote_core::structure::{DocumentStructure, SectionInfo};
+use knownote_core::structure::{
+    DocumentStructure, NormalizedBox, PageBlockInfo, PageInfo, SectionInfo,
+};
 use knownote_core::text::Utf16Index;
 use knownote_core::types::BlockKind;
 use knownote_core::{build_document_blocks, ChunkBlock, ChunkOptions, ChunkingService};
@@ -31,6 +33,8 @@ struct Case {
     content: String,
     #[serde(default)]
     loader: Option<LoaderFixture>,
+    #[serde(default)]
+    pdf: Option<PdfFixture>,
     #[serde(default)]
     blocks: Vec<BlockFixture>,
     runs: Vec<Run>,
@@ -50,6 +54,52 @@ struct LoaderFixture {
     #[allow(dead_code)]
     title: Option<String>,
     sections: Vec<SectionFixture>,
+}
+
+/// What the Rust PDF loader produced, recorded by the pin and converted to
+/// both offset units by the generator.
+///
+/// The offsets are anchored to the canonical text, exactly what
+/// `build_page_blocks` slices by; the UTF-16 columns exist for the TypeScript
+/// side and are ignored here.
+#[derive(Debug, Deserialize)]
+struct PdfFixture {
+    #[allow(dead_code)]
+    content: String,
+    #[allow(dead_code)]
+    title: Option<String>,
+    #[allow(dead_code)]
+    #[serde(rename = "mimeType")]
+    mime_type: String,
+    #[allow(dead_code)]
+    metadata: Option<serde_json::Value>,
+    pages: Vec<PageFixture>,
+}
+
+/// One page of a paginated document.
+#[derive(Debug, Deserialize)]
+struct PageFixture {
+    #[serde(rename = "pageNumber")]
+    page_number: i64,
+    content: String,
+    #[serde(rename = "startOffset")]
+    start_offset: usize,
+    #[serde(rename = "endOffset")]
+    end_offset: usize,
+    bbox: Option<NormalizedBox>,
+    #[serde(default)]
+    blocks: Vec<PageBlockFixture>,
+}
+
+/// One paragraph block inside a page.
+#[derive(Debug, Deserialize)]
+struct PageBlockFixture {
+    text: String,
+    #[serde(rename = "startOffset")]
+    start_offset: usize,
+    #[serde(rename = "endOffset")]
+    end_offset: usize,
+    bbox: Option<NormalizedBox>,
 }
 
 /// One section of the document structure.
@@ -378,17 +428,20 @@ fn the_rust_block_builder_matches_the_typescript_one() {
     let mut blocks_compared = 0usize;
 
     for case in &fixture.cases {
-        let Some(loader) = &case.loader else {
+        let structure = if let Some(pdf) = &case.pdf {
+            // The paginated path: the recorded pages go in as they were
+            // written, blocks included, byte offsets and all.
+            compared += 1;
+            DocumentStructure::Pages {
+                pages: pdf.pages.iter().map(to_page).collect(),
+            }
+        } else if let Some(loader) = &case.loader {
+            compared += 1;
+            DocumentStructure::Sections {
+                sections: loader.sections.iter().map(to_section).collect(),
+            }
+        } else {
             continue;
-        };
-        compared += 1;
-
-        let structure = DocumentStructure::Sections {
-            sections: loader
-                .sections
-                .iter()
-                .map(to_section)
-                .collect(),
         };
 
         let drafts = build_document_blocks(&case.content, Some(&structure));
@@ -462,6 +515,27 @@ fn to_section(fixture: &SectionFixture) -> SectionInfo {
     }
 }
 
+/// Rebuild a page from the fixture.
+fn to_page(fixture: &PageFixture) -> PageInfo {
+    PageInfo {
+        page_number: fixture.page_number,
+        content: fixture.content.clone(),
+        start_offset: fixture.start_offset,
+        end_offset: fixture.end_offset,
+        bbox: fixture.bbox,
+        blocks: fixture
+            .blocks
+            .iter()
+            .map(|block| PageBlockInfo {
+                text: block.text.clone(),
+                start_offset: block.start_offset,
+                end_offset: block.end_offset,
+                bbox: block.bbox,
+            })
+            .collect(),
+    }
+}
+
 /// The fixture must cover the shapes that are easy to get wrong, or a green
 /// run says very little.
 #[test]
@@ -481,12 +555,28 @@ fn the_fixture_covers_the_shapes_that_are_easy_to_get_wrong() {
         "synthetic/empty",
         "synthetic/whitespace-only",
         "synthetic/repeated-blank-lines",
+        // The paginated path is easy to get wrong in its own way, and only
+        // the PDF cases exercise it.
+        "pdf/sample.pdf",
+        "pdf/multipage.pdf",
     ] {
         assert!(
             names.contains_key(required),
             "the parity fixture is missing the case {required}"
         );
     }
+
+    // The paginated cases carry their recorded pages, or the block-builder
+    // comparison below would silently skip them.
+    assert!(
+        fixture
+            .cases
+            .iter()
+            .filter(|case| case.pdf.as_ref().is_some_and(|pdf| !pdf.pages.is_empty()))
+            .count()
+            >= 1,
+        "no paginated case in the fixture carries pages"
+    );
 
     // The corpus is what the eval baseline was measured on, so it has to be
     // part of the comparison.
