@@ -21,6 +21,8 @@ thiserror = { workspace = true }
 # `image` feature family stays off; `pdfium_7881` pins the FPDF_* API the bindings
 # were generated from instead of following the crate's own `pdfium_latest`.
 pdfium-render = { version = "0.9", default-features = false, features = ["thread_safe", "pdfium_7881"] }
+zip = "9.0.5"
+quick-xml = "0.42.0"
 
 [dev-dependencies]
 serde_json = { workspace = true }

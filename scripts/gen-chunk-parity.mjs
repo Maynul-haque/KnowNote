@@ -253,6 +253,61 @@ async function main() {
     })
   }
 
+  // The DOCX cases.
+  //
+  // Similar to PDF, we read the pin generated from our TypeScript DOCX loader
+  // and pass its output through the TS block builder and chunker.
+  const docxPin = JSON.parse(
+    readFileSync(
+      join(ROOT, 'crates', 'knownote-core', 'tests', 'fixtures', 'docx-loader.json'),
+      'utf8'
+    )
+  )
+
+  for (const pin of docxPin.cases ?? []) {
+    const content = pin.content
+
+    // We build a structure mimicking the LoaderResult for DOCX
+    const structure = pin.structure
+
+    const blocks = assignBlockIds(
+      'doc_parity',
+      buildDocumentBlocks({ content, structure })
+    )
+
+    cases.push({
+      name: `docx/${pin.name}`,
+      content,
+      // Record what the docx loader produced for this file
+      docx: {
+        content,
+        title: pin.title,
+        mimeType: pin.mimeType,
+        metadata: pin.metadata,
+        structure: pin.structure
+      },
+      blocks: blocks.map((block) => ({
+        id: block.id,
+        kind: block.kind,
+        page: block.page,
+        level: block.level,
+        text: block.text,
+        startOffset: byteOffsetOf(content, block.startOffset),
+        endOffset: byteOffsetOf(content, block.endOffset)
+      })),
+      runs: OPTION_SETS.map(({ name, options }) => ({
+        mode: 'blocks',
+        name,
+        options,
+        chunks: serialiseChunks(
+          content,
+          service.chunkBlocks(content, blocks, options),
+          new Map(blocks.map((block) => [block.id, block.text]))
+        )
+      }))
+    })
+  }
+
   // The PDF cases.
   //
   // This tree's PDF loader is the Rust one (PDFium), and its output is the

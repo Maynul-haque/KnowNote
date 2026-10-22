@@ -1,0 +1,7 @@
+{
+  "generatedBy": "scripts/gen-docx-loader-fixture.mjs",
+  "note": "The TypeScript DOCX loader's own output for the synthetic DOCX fixture.",
+  "cases": [
+    {"name":"sample.docx","content":"Main Title\n\nHello World\n\nSub Section\n\nAnother paragraph.","title":"Main Title","mimeType":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","metadata":{"warnings":[],"characterCount":56,"wordCount":8},"structure":{"type":"sections","sections":[{"level":1,"title":"Main Title","content":"Main Title\n\nHello World\n\nSub Section\n\nAnother paragraph.","startOffset":0,"endOffset":56,"children":[{"level":2,"title":"Sub Section","content":"Sub Section\n\nAnother paragraph.","startOffset":25,"endOffset":56}]}]}}
+  ]
+}
